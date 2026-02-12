@@ -7,6 +7,7 @@ import { Header } from "@/components/header";
 import { Sidebar } from "@/components/sidebar";
 import { DocsChat } from "@/components/docs-chat";
 import { cookies } from "next/headers";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 
 const geist = Geist({
   variable: "--font-geist",
@@ -62,6 +63,7 @@ export default async function RootLayout({
             <DocsChat defaultOpen={chatOpen} defaultWidth={chatWidth} />
           </MobileNavProvider>
         </ThemeProvider>
+        <SpeedInsights />
       </body>
     </html>
   );
