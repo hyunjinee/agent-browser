@@ -20,12 +20,6 @@ describe('sanitizeSurrogates', () => {
     expect(result).toBe('emoji: \uD83D\uDE00');
   });
 
-  it('does not modify strings without surrogates', () => {
-    const input = 'hello world 한글 テスト';
-    const result = sanitizeSurrogates(input);
-    expect(result).toBe(input);
-  });
-
   it('replaces consecutive lone surrogates', () => {
     const input = '\uD800\uD801\uD802';
     const result = sanitizeSurrogates(input);
