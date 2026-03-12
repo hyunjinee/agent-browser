@@ -1,14 +1,31 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as crypto from 'crypto';
 import {
   encryptData,
   decryptData,
   getEncryptionKey,
+  getKeyFilePath,
   isEncryptedPayload,
   ENCRYPTION_KEY_ENV,
   IV_LENGTH,
   type EncryptedPayload,
 } from './encryption.js';
+
+// Mock node:fs to isolate getEncryptionKey from the local filesystem
+const fsMocks = vi.hoisted(() => ({
+  mockExistsSync: vi.fn(),
+  mockReadFileSync: vi.fn(),
+  realExistsSync: null as unknown as typeof import('node:fs').existsSync,
+  realReadFileSync: null as unknown as typeof import('node:fs').readFileSync,
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  fsMocks.realExistsSync = actual.existsSync;
+  fsMocks.realReadFileSync = actual.readFileSync;
+  fsMocks.mockExistsSync.mockImplementation(actual.existsSync);
+  fsMocks.mockReadFileSync.mockImplementation(actual.readFileSync);
+  return { ...actual, existsSync: fsMocks.mockExistsSync, readFileSync: fsMocks.mockReadFileSync };
+});
 
 // Generate a valid test key (256 bits = 32 bytes = 64 hex chars)
 const generateTestKey = () => crypto.randomBytes(32);
@@ -250,9 +267,25 @@ describe('encryption', () => {
 
   describe('getEncryptionKey', () => {
     const originalEnv = process.env[ENCRYPTION_KEY_ENV];
+    const keyFilePath = getKeyFilePath();
+
+    function mockKeyFile(content?: string): void {
+      const exists = content !== undefined;
+      fsMocks.mockExistsSync.mockImplementation((path: string) => {
+        if (path === keyFilePath) return exists;
+        return fsMocks.realExistsSync(path);
+      });
+      if (exists) {
+        fsMocks.mockReadFileSync.mockImplementation((path: string, encoding?: string) => {
+          if (path === keyFilePath) return content;
+          return fsMocks.realReadFileSync(path, encoding as BufferEncoding);
+        });
+      }
+    }
 
     afterEach(() => {
-      // Restore original env
+      fsMocks.mockExistsSync.mockImplementation(fsMocks.realExistsSync);
+      fsMocks.mockReadFileSync.mockImplementation(fsMocks.realReadFileSync);
       if (originalEnv !== undefined) {
         process.env[ENCRYPTION_KEY_ENV] = originalEnv;
       } else {
@@ -260,62 +293,95 @@ describe('encryption', () => {
       }
     });
 
-    it('should return null when env var is not set', () => {
-      delete process.env[ENCRYPTION_KEY_ENV];
-      expect(getEncryptionKey()).toBeNull();
+    describe('from env var', () => {
+      beforeEach(() => {
+        mockKeyFile();
+      });
+
+      it('should return null when env var is not set', () => {
+        delete process.env[ENCRYPTION_KEY_ENV];
+        expect(getEncryptionKey()).toBeNull();
+      });
+
+      it('should return null for empty string', () => {
+        process.env[ENCRYPTION_KEY_ENV] = '';
+        expect(getEncryptionKey()).toBeNull();
+      });
+
+      it('should return null for invalid hex (too short)', () => {
+        process.env[ENCRYPTION_KEY_ENV] = 'abc123'; // Only 6 chars, need 64
+        expect(getEncryptionKey()).toBeNull();
+      });
+
+      it('should return null for invalid hex (too long)', () => {
+        process.env[ENCRYPTION_KEY_ENV] = 'a'.repeat(128); // 128 chars, need 64
+        expect(getEncryptionKey()).toBeNull();
+      });
+
+      it('should return null for non-hex characters', () => {
+        process.env[ENCRYPTION_KEY_ENV] = 'g'.repeat(64); // 'g' is not hex
+        expect(getEncryptionKey()).toBeNull();
+      });
+
+      it('should return valid key buffer for correct hex string', () => {
+        const keyHex = generateTestKeyHex();
+        process.env[ENCRYPTION_KEY_ENV] = keyHex;
+
+        const key = getEncryptionKey();
+        expect(key).not.toBeNull();
+        expect(key).toBeInstanceOf(Buffer);
+        expect(key!.length).toBe(32); // 256 bits
+        expect(key!.toString('hex')).toBe(keyHex.toLowerCase());
+      });
+
+      it('should accept uppercase hex', () => {
+        const keyHex = generateTestKeyHex().toUpperCase();
+        process.env[ENCRYPTION_KEY_ENV] = keyHex;
+
+        const key = getEncryptionKey();
+        expect(key).not.toBeNull();
+        expect(key!.length).toBe(32);
+      });
+
+      it('should accept mixed case hex', () => {
+        const keyHex = generateTestKeyHex();
+        const mixedCase = keyHex
+          .split('')
+          .map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c.toLowerCase()))
+          .join('');
+        process.env[ENCRYPTION_KEY_ENV] = mixedCase;
+
+        const key = getEncryptionKey();
+        expect(key).not.toBeNull();
+        expect(key!.length).toBe(32);
+      });
     });
 
-    it('should return null for empty string', () => {
-      process.env[ENCRYPTION_KEY_ENV] = '';
-      expect(getEncryptionKey()).toBeNull();
-    });
+    describe('from key file fallback', () => {
+      beforeEach(() => {
+        delete process.env[ENCRYPTION_KEY_ENV];
+      });
 
-    it('should return null for invalid hex (too short)', () => {
-      process.env[ENCRYPTION_KEY_ENV] = 'abc123'; // Only 6 chars, need 64
-      expect(getEncryptionKey()).toBeNull();
-    });
+      it('should return key when key file exists with valid hex', () => {
+        const keyHex = generateTestKeyHex();
+        mockKeyFile(keyHex);
 
-    it('should return null for invalid hex (too long)', () => {
-      process.env[ENCRYPTION_KEY_ENV] = 'a'.repeat(128); // 128 chars, need 64
-      expect(getEncryptionKey()).toBeNull();
-    });
+        const key = getEncryptionKey();
+        expect(key).not.toBeNull();
+        expect(key).toBeInstanceOf(Buffer);
+        expect(key!.length).toBe(32);
+        expect(key!.toString('hex')).toBe(keyHex.toLowerCase());
+      });
 
-    it('should return null for non-hex characters', () => {
-      process.env[ENCRYPTION_KEY_ENV] = 'g'.repeat(64); // 'g' is not hex
-      expect(getEncryptionKey()).toBeNull();
-    });
+      it('should return null when key file does not exist', () => {
+        mockKeyFile();
+        expect(getEncryptionKey()).toBeNull();
+      });
 
-    it('should return valid key buffer for correct hex string', () => {
-      const keyHex = generateTestKeyHex();
-      process.env[ENCRYPTION_KEY_ENV] = keyHex;
-
-      const key = getEncryptionKey();
-      expect(key).not.toBeNull();
-      expect(key).toBeInstanceOf(Buffer);
-      expect(key!.length).toBe(32); // 256 bits
-      expect(key!.toString('hex')).toBe(keyHex.toLowerCase());
-    });
-
-    it('should accept uppercase hex', () => {
-      const keyHex = generateTestKeyHex().toUpperCase();
-      process.env[ENCRYPTION_KEY_ENV] = keyHex;
-
-      const key = getEncryptionKey();
-      expect(key).not.toBeNull();
-      expect(key!.length).toBe(32);
-    });
-
-    it('should accept mixed case hex', () => {
-      const keyHex = generateTestKeyHex();
-      const mixedCase = keyHex
-        .split('')
-        .map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c.toLowerCase()))
-        .join('');
-      process.env[ENCRYPTION_KEY_ENV] = mixedCase;
-
-      const key = getEncryptionKey();
-      expect(key).not.toBeNull();
-      expect(key!.length).toBe(32);
+      it('should return null when key file contains invalid hex', () => {
+        mockKeyFile('not-valid-hex');
+        expect(getEncryptionKey()).toBeNull();
+      });
     });
   });
 
