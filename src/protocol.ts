@@ -1149,25 +1149,12 @@ export function errorResponse(id: string, error: string): Response {
 }
 
 /**
- * Replace lone surrogate escape sequences in a JSON string.
- * Handles \uD800-\uDFFF sequences that appear after JSON.stringify
- * when the source data contains lone surrogates.
- */
-function sanitizeJsonSurrogates(json: string): string {
-  return json
-    .replace(/\\u[dD][89aAbB][0-9a-fA-F]{2}(?!\\u[dD][cCdDeEfF][0-9a-fA-F]{2})/g, '\\ufffd')
-    .replace(/(?<!\\u[dD][89aAbB][0-9a-fA-F]{2})\\u[dD][cCdDeEfF][0-9a-fA-F]{2}/g, '\\ufffd');
-}
-
-/**
  * Serialize a response to JSON string.
- * Sanitizes lone Unicode surrogate escapes that would cause
+ * Replaces lone Unicode surrogates with U+FFFD to prevent
  * serde_json parsing errors on the Rust side.
  */
 export function serializeResponse(response: Response): string {
-  const json = JSON.stringify(response);
-  if (json.includes('\\ud') || json.includes('\\uD')) {
-    return sanitizeJsonSurrogates(json);
-  }
-  return json;
+  return JSON.stringify(response, (_key, value) =>
+    typeof value === 'string' && !value.isWellFormed() ? value.toWellFormed() : value
+  );
 }
