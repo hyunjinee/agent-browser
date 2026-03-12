@@ -12,19 +12,17 @@ import {
 } from './encryption.js';
 
 // Mock node:fs to isolate getEncryptionKey from the local filesystem
-const fsMocks = vi.hoisted(() => ({
-  mockExistsSync: vi.fn(),
-  mockReadFileSync: vi.fn(),
-  realExistsSync: null as unknown as typeof import('node:fs').existsSync,
-  realReadFileSync: null as unknown as typeof import('node:fs').readFileSync,
+const mockFs = vi.hoisted(() => ({
+  existsSync: vi.fn(),
+  readFileSync: vi.fn(),
+  originals: {} as Pick<typeof import('node:fs'), 'existsSync' | 'readFileSync'>,
 }));
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  fsMocks.realExistsSync = actual.existsSync;
-  fsMocks.realReadFileSync = actual.readFileSync;
-  fsMocks.mockExistsSync.mockImplementation(actual.existsSync);
-  fsMocks.mockReadFileSync.mockImplementation(actual.readFileSync);
-  return { ...actual, existsSync: fsMocks.mockExistsSync, readFileSync: fsMocks.mockReadFileSync };
+  mockFs.originals = { existsSync: actual.existsSync, readFileSync: actual.readFileSync };
+  mockFs.existsSync.mockImplementation(actual.existsSync);
+  mockFs.readFileSync.mockImplementation(actual.readFileSync);
+  return { ...actual, existsSync: mockFs.existsSync, readFileSync: mockFs.readFileSync };
 });
 
 // Generate a valid test key (256 bits = 32 bytes = 64 hex chars)
@@ -271,21 +269,21 @@ describe('encryption', () => {
 
     function mockKeyFile(content?: string): void {
       const exists = content !== undefined;
-      fsMocks.mockExistsSync.mockImplementation((path: string) => {
+      mockFs.existsSync.mockImplementation((path: string) => {
         if (path === keyFilePath) return exists;
-        return fsMocks.realExistsSync(path);
+        return mockFs.originals.existsSync(path);
       });
       if (exists) {
-        fsMocks.mockReadFileSync.mockImplementation((path: string, encoding?: string) => {
+        mockFs.readFileSync.mockImplementation((path: string, encoding?: string) => {
           if (path === keyFilePath) return content;
-          return fsMocks.realReadFileSync(path, encoding as BufferEncoding);
+          return mockFs.originals.readFileSync(path, encoding as BufferEncoding);
         });
       }
     }
 
     afterEach(() => {
-      fsMocks.mockExistsSync.mockImplementation(fsMocks.realExistsSync);
-      fsMocks.mockReadFileSync.mockImplementation(fsMocks.realReadFileSync);
+      mockFs.existsSync.mockImplementation(mockFs.originals.existsSync);
+      mockFs.readFileSync.mockImplementation(mockFs.originals.readFileSync);
       if (originalEnv !== undefined) {
         process.env[ENCRYPTION_KEY_ENV] = originalEnv;
       } else {
