@@ -73,16 +73,16 @@ pub fn recording_stop(state: &mut RecordingState) -> Result<Value, String> {
 
     let output = &state.output_path;
 
-    let (codec, extra) = if output.ends_with(".webm") {
-        ("libvpx-vp9", ["-crf", "30"])
+    let codec_args: &[&str] = if output.ends_with(".webm") {
+        &["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0"]
     } else {
-        ("libx264", ["-preset", "fast"])
+        &["-c:v", "libx264", "-preset", "fast"]
     };
 
     let result = Command::new("ffmpeg")
         .args(["-y", "-framerate", "30", "-i", &frame_pattern])
-        .args(["-c:v", codec, "-pix_fmt", "yuv420p"])
-        .args(extra)
+        .args(codec_args)
+        .args(["-pix_fmt", "yuv420p"])
         .arg(output)
         .output();
 
