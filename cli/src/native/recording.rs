@@ -74,7 +74,7 @@ pub fn recording_stop(state: &mut RecordingState) -> Result<Value, String> {
     let output = &state.output_path;
 
     let (codec, extra) = if output.ends_with(".webm") {
-        ("libvpx-vp9", ["-b:v", "2M"])
+        ("libvpx-vp9", ["-crf", "30"])
     } else {
         ("libx264", ["-preset", "fast"])
     };
