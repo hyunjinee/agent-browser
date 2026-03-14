@@ -157,6 +157,24 @@ impl DaemonState {
         }
     }
 
+    /// Save session state if a session name is set and a page is active.
+    pub async fn save_session_state(&self) {
+        if let Some(ref mgr) = self.browser {
+            if let Some(ref session_name) = self.session_name {
+                if let Ok(session_id) = mgr.active_session_id() {
+                    let _ = state::save_state(
+                        &mgr.client,
+                        session_id,
+                        None,
+                        Some(session_name.as_str()),
+                        &self.session_id,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
     /// Update the stream server's CDP client slot when browser is set or cleared.
     pub async fn update_stream_client(&self) {
         if let Some(ref slot) = self.stream_client {
@@ -418,6 +436,12 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+
+    // Save session state before draining events — drain removes destroyed targets,
+    // leaving no pages to collect cookies/storage from.
+    if action == "close" {
+        state.save_session_state().await;
+    }
 
     // Drain pending CDP events (console, errors, screencast frames, target lifecycle, fetch)
     let (pending_acks, new_targets, destroyed_targets, fetch_paused) = state.drain_cdp_events();
@@ -1301,20 +1325,6 @@ async fn handle_evaluate(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
 }
 
 async fn handle_close(state: &mut DaemonState) -> Result<Value, String> {
-    if let Some(ref mgr) = state.browser {
-        if let Some(ref session_name) = state.session_name {
-            if let Ok(session_id) = mgr.active_session_id() {
-                let _ = state::save_state(
-                    &mgr.client,
-                    session_id,
-                    None,
-                    Some(session_name.as_str()),
-                    &state.session_id,
-                )
-                .await;
-            }
-        }
-    }
     if let Some(ref mut mgr) = state.browser {
         mgr.close().await?;
     }

@@ -124,6 +124,7 @@ async fn run_socket_server(
                 }
             }, if idle_timeout_ms.is_some() => {
                 let mut s = state.lock().await;
+                s.save_session_state().await;
                 if let Some(ref mut mgr) = s.browser {
                     let _ = mgr.close().await;
                 }
@@ -134,6 +135,7 @@ async fn run_socket_server(
             }
             _ = shutdown_signal() => {
                 let mut s = state.lock().await;
+                s.save_session_state().await;
                 if let Some(ref mut mgr) = s.browser {
                     let _ = mgr.close().await;
                 }
@@ -197,6 +199,7 @@ async fn run_socket_server(
                 }
             }, if idle_timeout_ms.is_some() => {
                 let mut s = state.lock().await;
+                s.save_session_state().await;
                 if let Some(ref mut mgr) = s.browser {
                     let _ = mgr.close().await;
                 }
@@ -208,6 +211,7 @@ async fn run_socket_server(
             }
             _ = shutdown_signal() => {
                 let mut s = state.lock().await;
+                s.save_session_state().await;
                 if let Some(ref mut mgr) = s.browser {
                     let _ = mgr.close().await;
                 }
