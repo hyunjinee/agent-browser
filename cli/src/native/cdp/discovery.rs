@@ -10,7 +10,16 @@ const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 /// the requested target, since Chrome always reports `127.0.0.1` regardless
 /// of the interface it was reached through.
 pub async fn discover_cdp_url(host: &str, port: u16) -> Result<String, String> {
-    let info = fetch_cdp_info(host, port, DEFAULT_DISCOVERY_TIMEOUT).await?;
+    discover_cdp_url_with_timeout(host, port, DEFAULT_DISCOVERY_TIMEOUT).await
+}
+
+/// Like [`discover_cdp_url`] but with a custom request timeout.
+pub async fn discover_cdp_url_with_timeout(
+    host: &str,
+    port: u16,
+    timeout: Duration,
+) -> Result<String, String> {
+    let info = fetch_cdp_info(host, port, timeout).await?;
     let ws_url = info.web_socket_debugger_url.ok_or_else(|| {
         format!(
             "No webSocketDebuggerUrl in /json/version at {}:{}",
@@ -18,19 +27,6 @@ pub async fn discover_cdp_url(host: &str, port: u16) -> Result<String, String> {
         )
     })?;
     Ok(rewrite_ws_host(&ws_url, host, port))
-}
-
-/// Like [`discover_cdp_url`] but with a custom request timeout.
-/// Used by LightPanda which polls with short intervals during startup.
-pub async fn discover_cdp_url_with_request_timeout(
-    port: u16,
-    request_timeout: Duration,
-) -> Result<String, String> {
-    let info = fetch_cdp_info("127.0.0.1", port, request_timeout).await?;
-    let ws_url = info
-        .web_socket_debugger_url
-        .ok_or_else(|| format!("No webSocketDebuggerUrl in /json/version on port {}", port))?;
-    Ok(rewrite_ws_host(&ws_url, "127.0.0.1", port))
 }
 
 /// Fetch `/json/version` from the given host:port and parse the response.
