@@ -879,11 +879,16 @@ mod tests {
     }
 
     #[test]
-    fn test_build_selector_js_xpath_strips_prefix() {
-        let js = build_selector_js("xpath=//div");
-        // The xpath= prefix should be stripped; querySelector should NOT appear
-        assert!(!js.contains("xpath="));
-        assert!(js.contains("\"//div\""));
+    fn test_build_selector_js_xpath_empty() {
+        let js = build_selector_js("xpath=");
+        assert!(js.contains("document.evaluate"));
+    }
+
+    #[test]
+    fn test_build_selector_js_not_xpath_prefix() {
+        // "xpath" without "=" should be treated as CSS selector
+        let js = build_selector_js("xpath//div");
+        assert!(js.contains("document.querySelector"));
     }
 
     #[test]
