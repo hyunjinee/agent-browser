@@ -264,17 +264,7 @@ pub async fn resolve_element_object_id(
     }
 
     // Selector fallback (CSS or XPath)
-    let js = if let Some(xpath) = selector_or_ref.strip_prefix("xpath=") {
-        format!(
-            "document.evaluate({}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue",
-            serde_json::to_string(xpath).unwrap_or_default()
-        )
-    } else {
-        format!(
-            "document.querySelector({})",
-            serde_json::to_string(selector_or_ref).unwrap_or_default()
-        )
-    };
+    let js = build_find_element_js(selector_or_ref);
     let result: EvaluateResult = client
         .send_command_typed(
             "Runtime.evaluate",
@@ -354,19 +344,23 @@ fn extract_ax_string(value: &Option<AXValue>) -> String {
     }
 }
 
-fn build_selector_js(selector: &str) -> String {
-    let (find_expr, param) = if let Some(xpath) = selector.strip_prefix("xpath=") {
-        (
-            "document.evaluate({p}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue",
-            serde_json::to_string(xpath).unwrap_or_default(),
+/// Build a JS expression that finds a DOM element by CSS selector or XPath.
+fn build_find_element_js(selector: &str) -> String {
+    if let Some(xpath) = selector.strip_prefix("xpath=") {
+        format!(
+            "document.evaluate({}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue",
+            serde_json::to_string(xpath).unwrap_or_default()
         )
     } else {
-        (
-            "document.querySelector({p})",
-            serde_json::to_string(selector).unwrap_or_default(),
+        format!(
+            "document.querySelector({})",
+            serde_json::to_string(selector).unwrap_or_default()
         )
-    };
-    let find = find_expr.replace("{p}", &param);
+    }
+}
+
+fn build_selector_js(selector: &str) -> String {
+    let find = build_find_element_js(selector);
     format!(
         r#"(() => {{
             const el = {find};
