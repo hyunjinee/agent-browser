@@ -347,20 +347,35 @@ fn extract_ax_string(value: &Option<AXValue>) -> String {
     }
 }
 
+fn build_selector_js(selector: &str) -> String {
+    let (find_expr, param) = if let Some(xpath) = selector.strip_prefix("xpath=") {
+        (
+            "document.evaluate({p}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue",
+            serde_json::to_string(xpath).unwrap_or_default(),
+        )
+    } else {
+        (
+            "document.querySelector({p})",
+            serde_json::to_string(selector).unwrap_or_default(),
+        )
+    };
+    let find = find_expr.replace("{p}", &param);
+    format!(
+        r#"(() => {{
+            const el = {find};
+            if (!el) return null;
+            const rect = el.getBoundingClientRect();
+            return {{ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }};
+        }})()"#,
+    )
+}
+
 async fn resolve_by_selector(
     client: &CdpClient,
     session_id: &str,
     selector: &str,
 ) -> Result<(f64, f64), String> {
-    let js = format!(
-        r#"(() => {{
-            const el = document.querySelector({sel});
-            if (!el) return null;
-            const rect = el.getBoundingClientRect();
-            return {{ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }};
-        }})()"#,
-        sel = serde_json::to_string(selector).unwrap_or_default(),
-    );
+    let js = build_selector_js(selector);
 
     let result: EvaluateResult = client
         .send_command_typed(
@@ -847,6 +862,28 @@ mod tests {
         assert!(map.get("e1").is_some());
         assert_eq!(map.get("e1").unwrap().role, "button");
         assert!(map.get("e2").is_none());
+    }
+
+    #[test]
+    fn test_build_selector_js_css() {
+        let js = build_selector_js("#submit-btn");
+        assert!(js.contains("document.querySelector(\"#submit-btn\")"));
+        assert!(!js.contains("document.evaluate"));
+    }
+
+    #[test]
+    fn test_build_selector_js_xpath() {
+        let js = build_selector_js("xpath=//button[@id='ok']");
+        assert!(js.contains("document.evaluate(\"//button[@id='ok']\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null)"));
+        assert!(!js.contains("document.querySelector"));
+    }
+
+    #[test]
+    fn test_build_selector_js_xpath_strips_prefix() {
+        let js = build_selector_js("xpath=//div");
+        // The xpath= prefix should be stripped; querySelector should NOT appear
+        assert!(!js.contains("xpath="));
+        assert!(js.contains("\"//div\""));
     }
 
     #[test]
