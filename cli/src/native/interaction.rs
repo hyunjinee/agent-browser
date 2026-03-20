@@ -15,7 +15,7 @@ pub async fn click(
     click_count: i32,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (x, y, effective_session) = resolve_element_center(
+    let (x, y, effective_session_id) = resolve_element_center(
         client,
         session_id,
         ref_map,
@@ -23,7 +23,7 @@ pub async fn click(
         iframe_sessions,
     )
     .await?;
-    dispatch_click(client, &effective_session, x, y, button, click_count).await
+    dispatch_click(client, &effective_session_id, x, y, button, click_count).await
 }
 
 pub async fn dblclick(
@@ -52,7 +52,7 @@ pub async fn hover(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (x, y, effective_session) = resolve_element_center(
+    let (x, y, effective_session_id) = resolve_element_center(
         client,
         session_id,
         ref_map,
@@ -74,7 +74,7 @@ pub async fn hover(
                 delta_y: None,
                 modifiers: None,
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
     Ok(())
@@ -88,7 +88,7 @@ pub async fn fill(
     value: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -108,7 +108,7 @@ pub async fn fill(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -128,7 +128,7 @@ pub async fn fill(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -157,7 +157,7 @@ pub async fn type_text(
     delay_ms: Option<u64>,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -177,7 +177,7 @@ pub async fn type_text(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -197,7 +197,7 @@ pub async fn type_text(
                     return_by_value: Some(true),
                     await_promise: Some(false),
                 },
-                Some(&effective_session),
+                Some(&effective_session_id),
             )
             .await?;
     }
@@ -330,7 +330,7 @@ pub async fn scroll(
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
     if let Some(sel) = selector_or_ref {
-        let (object_id, effective_session) =
+        let (object_id, effective_session_id) =
             resolve_element_object_id(client, session_id, ref_map, sel, iframe_sessions).await?;
         let js = "function(dx, dy) { this.scrollBy(dx, dy); }".to_string();
         client
@@ -352,7 +352,7 @@ pub async fn scroll(
                     return_by_value: Some(true),
                     await_promise: Some(false),
                 },
-                Some(&effective_session),
+                Some(&effective_session_id),
             )
             .await?;
     } else {
@@ -380,7 +380,7 @@ pub async fn select_option(
     values: &[String],
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -411,7 +411,7 @@ pub async fn select_option(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -536,7 +536,7 @@ async fn js_click_checkbox(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -579,7 +579,7 @@ async fn js_click_checkbox(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -593,7 +593,7 @@ pub async fn focus(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -612,7 +612,7 @@ pub async fn focus(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -626,7 +626,7 @@ pub async fn clear(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -651,7 +651,7 @@ pub async fn clear(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -665,7 +665,7 @@ pub async fn select_all(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -696,7 +696,7 @@ pub async fn select_all(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -710,7 +710,7 @@ pub async fn scroll_into_view(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -731,7 +731,7 @@ pub async fn scroll_into_view(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -747,7 +747,7 @@ pub async fn dispatch_event(
     event_init: Option<&Value>,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -776,7 +776,7 @@ pub async fn dispatch_event(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -790,7 +790,7 @@ pub async fn highlight(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -818,7 +818,7 @@ pub async fn highlight(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -832,7 +832,7 @@ pub async fn tap_touch(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (x, y, effective_session) = resolve_element_center(
+    let (x, y, effective_session_id) = resolve_element_center(
         client,
         session_id,
         ref_map,
@@ -848,7 +848,7 @@ pub async fn tap_touch(
                 "type": "touchStart",
                 "touchPoints": [{ "x": x, "y": y }],
             })),
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -859,7 +859,7 @@ pub async fn tap_touch(
                 "type": "touchEnd",
                 "touchPoints": [],
             })),
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 

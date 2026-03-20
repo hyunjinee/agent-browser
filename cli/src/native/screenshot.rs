@@ -328,7 +328,7 @@ async fn get_rect_for_selector(
     selector: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<Option<Rect>, String> {
-    let (object_id, effective_session) = super::element::resolve_element_object_id(
+    let (object_id, effective_session_id) = super::element::resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -336,7 +336,7 @@ async fn get_rect_for_selector(
         iframe_sessions,
     )
     .await?;
-    get_rect_for_object(client, &effective_session, &object_id).await
+    get_rect_for_object(client, &effective_session_id, &object_id).await
 }
 
 async fn get_rect_for_object(

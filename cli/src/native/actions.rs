@@ -424,6 +424,8 @@ impl DaemonState {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
                                 if target_type == "iframe" {
+                                    // For OOPIF targets, Chrome uses the frameId as
+                                    // the targetId, so we can key iframe_sessions by it.
                                     if let Some(target_id) =
                                         target_info.get("targetId").and_then(|v| v.as_str())
                                     {
@@ -1909,7 +1911,7 @@ async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
     if new_tab {
         use super::element::resolve_element_object_id;
-        let (object_id, effective_session) = resolve_element_object_id(
+        let (object_id, effective_session_id) = resolve_element_object_id(
             &mgr.client,
             &session_id,
             &state.ref_map,
@@ -1927,7 +1929,7 @@ async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
             .send_command(
                 "Runtime.callFunctionOn",
                 Some(call_params),
-                Some(&effective_session),
+                Some(&effective_session_id),
             )
             .await?;
         let href = call_result
@@ -4631,7 +4633,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         .and_then(|v| v.as_str())
         .ok_or("Missing 'target' parameter")?;
 
-    let (sx, sy, _) = super::element::resolve_element_center(
+    let (sx, sy, source_session) = super::element::resolve_element_center(
         &mgr.client,
         &session_id,
         &state.ref_map,
@@ -4639,7 +4641,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         &state.iframe_sessions,
     )
     .await?;
-    let (tx, ty, _) = super::element::resolve_element_center(
+    let (tx, ty, target_session) = super::element::resolve_element_center(
         &mgr.client,
         &session_id,
         &state.ref_map,
@@ -4653,14 +4655,14 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         .send_command(
             "Input.dispatchMouseEvent",
             Some(json!({ "type": "mouseMoved", "x": sx, "y": sy })),
-            Some(&session_id),
+            Some(&source_session),
         )
         .await?;
     mgr.client
         .send_command(
             "Input.dispatchMouseEvent",
             Some(json!({ "type": "mousePressed", "x": sx, "y": sy, "button": "left", "clickCount": 1 })),
-            Some(&session_id),
+            Some(&source_session),
         )
         .await?;
 
@@ -4673,7 +4675,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
             .send_command(
                 "Input.dispatchMouseEvent",
                 Some(json!({ "type": "mouseMoved", "x": cx, "y": cy })),
-                Some(&session_id),
+                Some(&target_session),
             )
             .await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -4684,7 +4686,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         .send_command(
             "Input.dispatchMouseEvent",
             Some(json!({ "type": "mouseReleased", "x": tx, "y": ty, "button": "left", "clickCount": 1 })),
-            Some(&session_id),
+            Some(&target_session),
         )
         .await?;
 

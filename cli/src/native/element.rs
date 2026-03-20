@@ -154,7 +154,7 @@ pub async fn resolve_element_center(
             .get(&ref_id)
             .ok_or_else(|| format!("Unknown ref: {}", ref_id))?;
 
-        let effective_session =
+        let effective_session_id =
             resolve_frame_session(entry.frame_id.as_deref(), session_id, iframe_sessions);
 
         // Try cached backend_node_id first (fast path)
@@ -167,13 +167,13 @@ pub async fn resolve_element_center(
                         node_id: None,
                         object_id: None,
                     },
-                    Some(effective_session),
+                    Some(effective_session_id),
                 )
                 .await;
 
             if let Ok(r) = result {
                 let (x, y) = box_model_center(&r.model);
-                return Ok((x, y, effective_session.to_string()));
+                return Ok((x, y, effective_session_id.to_string()));
             }
             // backend_node_id is stale; re-query the accessibility tree below
         }
@@ -197,11 +197,11 @@ pub async fn resolve_element_center(
                     node_id: None,
                     object_id: None,
                 },
-                Some(effective_session),
+                Some(effective_session_id),
             )
             .await?;
         let (x, y) = box_model_center(&result.model);
-        return Ok((x, y, effective_session.to_string()));
+        return Ok((x, y, effective_session_id.to_string()));
     }
 
     // CSS selector
@@ -221,7 +221,7 @@ pub async fn resolve_element_object_id(
             .get(&ref_id)
             .ok_or_else(|| format!("Unknown ref: {}", ref_id))?;
 
-        let effective_session =
+        let effective_session_id =
             resolve_frame_session(entry.frame_id.as_deref(), session_id, iframe_sessions);
 
         // Try cached backend_node_id first (fast path)
@@ -234,13 +234,13 @@ pub async fn resolve_element_object_id(
                         node_id: None,
                         object_group: Some("agent-browser".to_string()),
                     },
-                    Some(effective_session),
+                    Some(effective_session_id),
                 )
                 .await;
 
             if let Ok(r) = result {
                 if let Some(object_id) = r.object.object_id {
-                    return Ok((object_id, effective_session.to_string()));
+                    return Ok((object_id, effective_session_id.to_string()));
                 }
             }
             // backend_node_id is stale; re-query the accessibility tree below
@@ -265,14 +265,14 @@ pub async fn resolve_element_object_id(
                     node_id: None,
                     object_group: Some("agent-browser".to_string()),
                 },
-                Some(effective_session),
+                Some(effective_session_id),
             )
             .await?;
         let object_id = result
             .object
             .object_id
             .ok_or_else(|| format!("No objectId for ref {}", ref_id))?;
-        return Ok((object_id, effective_session.to_string()));
+        return Ok((object_id, effective_session_id.to_string()));
     }
 
     // Selector fallback (CSS or XPath)
@@ -342,12 +342,13 @@ async fn find_node_id_by_role_name(
     frame_id: Option<&str>,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<i64, String> {
-    let (ax_params, effective_session) = resolve_ax_session(frame_id, session_id, iframe_sessions);
+    let (ax_params, effective_session_id) =
+        resolve_ax_session(frame_id, session_id, iframe_sessions);
     let ax_tree: GetFullAXTreeResult = client
         .send_command_typed(
             "Accessibility.getFullAXTree",
             &ax_params,
-            Some(effective_session),
+            Some(effective_session_id),
         )
         .await?;
 
@@ -480,7 +481,7 @@ pub async fn get_element_text(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<String, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -500,7 +501,7 @@ pub async fn get_element_text(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -519,7 +520,7 @@ pub async fn get_element_attribute(
     attribute: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<Value, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -541,7 +542,7 @@ pub async fn get_element_attribute(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -555,7 +556,7 @@ pub async fn is_element_visible(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<bool, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -582,7 +583,7 @@ pub async fn is_element_visible(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -600,7 +601,7 @@ pub async fn is_element_enabled(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<bool, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -619,7 +620,7 @@ pub async fn is_element_enabled(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -637,7 +638,7 @@ pub async fn is_element_checked(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<bool, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -689,7 +690,7 @@ pub async fn is_element_checked(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -707,7 +708,7 @@ pub async fn get_element_inner_text(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<String, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -726,7 +727,7 @@ pub async fn get_element_inner_text(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -744,7 +745,7 @@ pub async fn get_element_inner_html(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<String, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -763,7 +764,7 @@ pub async fn get_element_inner_html(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -781,7 +782,7 @@ pub async fn get_element_input_value(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<String, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -802,7 +803,7 @@ pub async fn get_element_input_value(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -821,7 +822,7 @@ pub async fn set_element_value(
     value: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -845,7 +846,7 @@ pub async fn set_element_value(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -859,7 +860,7 @@ pub async fn get_element_bounding_box(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<Value, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -882,7 +883,7 @@ pub async fn get_element_bounding_box(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
@@ -922,7 +923,7 @@ pub async fn get_element_styles(
     properties: Option<Vec<String>>,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<Value, String> {
-    let (object_id, effective_session) = resolve_element_object_id(
+    let (object_id, effective_session_id) = resolve_element_object_id(
         client,
         session_id,
         ref_map,
@@ -967,7 +968,7 @@ pub async fn get_element_styles(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&effective_session),
+            Some(&effective_session_id),
         )
         .await?;
 
