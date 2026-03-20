@@ -304,11 +304,11 @@ pub(super) fn resolve_ax_session<'a>(
     session_id: &'a str,
     iframe_sessions: &'a HashMap<String, String>,
 ) -> (serde_json::Value, &'a str) {
-    if let Some(fid) = frame_id {
-        if let Some(iframe_sid) = iframe_sessions.get(fid) {
+    if let Some(frame_id) = frame_id {
+        if let Some(iframe_sid) = iframe_sessions.get(frame_id) {
             (serde_json::json!({}), iframe_sid.as_str())
         } else {
-            (serde_json::json!({ "frameId": fid }), session_id)
+            (serde_json::json!({ "frameId": frame_id }), session_id)
         }
     } else {
         (serde_json::json!({}), session_id)
