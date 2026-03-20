@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 pub mod actions;
+pub mod errors;
 #[allow(dead_code)]
 pub mod auth;
 #[allow(dead_code)]

@@ -10,6 +10,7 @@ use super::cdp::client::CdpClient;
 use super::cdp::discovery::discover_cdp_url;
 use super::cdp::lightpanda::{launch_lightpanda, LightpandaLaunchOptions, LightpandaProcess};
 use super::cdp::types::*;
+use super::errors::BrowserError;
 
 // ---------------------------------------------------------------------------
 // Launch validation
@@ -24,33 +25,37 @@ pub fn validate_launch_options(
     storage_state: Option<&str>,
     allow_file_access: bool,
     executable_path: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), BrowserError> {
     let has_extensions = extensions.map(|e| !e.is_empty()).unwrap_or(false);
 
     if has_extensions && has_cdp {
-        return Err(
+        return Err(BrowserError::Validation(
             "Cannot use extensions with cdp_url (extensions require local browser launch)"
                 .to_string(),
-        );
+        ));
     }
     if profile.is_some() && has_cdp {
-        return Err(
+        return Err(BrowserError::Validation(
             "Cannot use profile with cdp_url (profile requires local browser launch)".to_string(),
-        );
+        ));
     }
     if storage_state.is_some() && profile.is_some() {
-        return Err("Cannot use storage_state with profile".to_string());
+        return Err(BrowserError::Validation(
+            "Cannot use storage_state with profile".to_string(),
+        ));
     }
     if storage_state.is_some() && has_extensions {
-        return Err("Cannot use storage_state with extensions".to_string());
+        return Err(BrowserError::Validation(
+            "Cannot use storage_state with extensions".to_string(),
+        ));
     }
     if allow_file_access {
         if let Some(path) = executable_path {
             let lower = path.to_lowercase();
             if lower.contains("firefox") || lower.contains("webkit") || lower.contains("safari") {
-                return Err(
+                return Err(BrowserError::Validation(
                     "allow_file_access is not supported with non-Chromium browsers".to_string(),
-                );
+                ));
             }
         }
     }
@@ -58,31 +63,41 @@ pub fn validate_launch_options(
 }
 
 /// Validates that Chrome-only options are not used with Lightpanda.
-fn validate_lightpanda_options(options: &LaunchOptions) -> Result<(), String> {
+fn validate_lightpanda_options(options: &LaunchOptions) -> Result<(), BrowserError> {
     if options
         .extensions
         .as_ref()
         .map(|e| !e.is_empty())
         .unwrap_or(false)
     {
-        return Err("Extensions are not supported with Lightpanda".to_string());
+        return Err(BrowserError::Validation(
+            "Extensions are not supported with Lightpanda".to_string(),
+        ));
     }
     if options.profile.is_some() {
-        return Err("Profiles are not supported with Lightpanda".to_string());
+        return Err(BrowserError::Validation(
+            "Profiles are not supported with Lightpanda".to_string(),
+        ));
     }
     if options.storage_state.is_some() {
-        return Err("Storage state is not supported with Lightpanda".to_string());
+        return Err(BrowserError::Validation(
+            "Storage state is not supported with Lightpanda".to_string(),
+        ));
     }
     if options.allow_file_access {
-        return Err("File access is not supported with Lightpanda".to_string());
+        return Err(BrowserError::Validation(
+            "File access is not supported with Lightpanda".to_string(),
+        ));
     }
     if !options.headless {
-        return Err("Headed mode is not supported with Lightpanda (headless only)".to_string());
+        return Err(BrowserError::Validation(
+            "Headed mode is not supported with Lightpanda (headless only)".to_string(),
+        ));
     }
     if !options.args.is_empty() {
-        return Err(
+        return Err(BrowserError::Validation(
             "Custom Chrome arguments (--args) are not supported with Lightpanda".to_string(),
-        );
+        ));
     }
     Ok(())
 }
@@ -181,7 +196,7 @@ const LIGHTPANDA_CDP_CONNECT_POLL_INTERVAL: Duration = Duration::from_millis(100
 const LIGHTPANDA_TARGET_INIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl BrowserManager {
-    pub async fn launch(options: LaunchOptions, engine: Option<&str>) -> Result<Self, String> {
+    pub async fn launch(options: LaunchOptions, engine: Option<&str>) -> Result<Self, BrowserError> {
         let engine = engine.unwrap_or("chrome");
 
         match engine {
@@ -199,10 +214,9 @@ impl BrowserManager {
                 validate_lightpanda_options(&options)?;
             }
             _ => {
-                return Err(format!(
-                    "Unknown engine '{}'. Supported engines: chrome, lightpanda",
-                    engine
-                ));
+                return Err(BrowserError::UnknownEngine {
+                    engine: engine.to_string(),
+                });
             }
         }
 
@@ -225,7 +239,7 @@ impl BrowserManager {
             _ => {
                 let chrome = tokio::task::spawn_blocking(move || launch_chrome(&options))
                     .await
-                    .map_err(|e| format!("Chrome launch task failed: {}", e))??;
+                    .map_err(|e| BrowserError::LaunchTaskFailed(e.to_string()))??;
                 let url = chrome.ws_url.clone();
                 (url, BrowserProcess::Chrome(chrome))
             }
@@ -296,9 +310,13 @@ impl BrowserManager {
         Ok(manager)
     }
 
-    pub async fn connect_cdp(url: &str) -> Result<Self, String> {
+    pub async fn connect_cdp(url: &str) -> Result<Self, BrowserError> {
         let ws_url = resolve_cdp_url(url).await?;
-        let client = Arc::new(CdpClient::connect(&ws_url).await?);
+        let client = Arc::new(
+            CdpClient::connect(&ws_url)
+                .await
+                .map_err(|e| BrowserError::ConnectionFailed(e))?,
+        );
         let mut manager = Self {
             client,
             browser_process: None,
@@ -312,12 +330,12 @@ impl BrowserManager {
         Ok(manager)
     }
 
-    pub async fn connect_auto() -> Result<Self, String> {
+    pub async fn connect_auto() -> Result<Self, BrowserError> {
         let ws_url = auto_connect_cdp().await?;
         Self::connect_cdp(&ws_url).await
     }
 
-    async fn discover_and_attach_targets(&mut self) -> Result<(), String> {
+    async fn discover_and_attach_targets(&mut self) -> Result<(), BrowserError> {
         self.client
             .send_command_typed::<_, Value>(
                 "Target.setDiscoverTargets",
@@ -406,11 +424,11 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub async fn enable_domains_pub(&self, session_id: &str) -> Result<(), String> {
+    pub async fn enable_domains_pub(&self, session_id: &str) -> Result<(), BrowserError> {
         self.enable_domains(session_id).await
     }
 
-    async fn enable_domains(&self, session_id: &str) -> Result<(), String> {
+    async fn enable_domains(&self, session_id: &str) -> Result<(), BrowserError> {
         self.client
             .send_command_no_params("Page.enable", Some(session_id))
             .await?;
@@ -423,14 +441,14 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub fn active_session_id(&self) -> Result<&str, String> {
+    pub fn active_session_id(&self) -> Result<&str, BrowserError> {
         self.pages
             .get(self.active_page_index)
             .map(|p| p.session_id.as_str())
-            .ok_or_else(|| "No active page".to_string())
+            .ok_or(BrowserError::NoActivePage)
     }
 
-    pub async fn navigate(&mut self, url: &str, wait_until: WaitUntil) -> Result<Value, String> {
+    pub async fn navigate(&mut self, url: &str, wait_until: WaitUntil) -> Result<Value, BrowserError> {
         let session_id = self.active_session_id()?.to_string();
         let mut lifecycle_rx = self.client.subscribe();
 
@@ -447,7 +465,7 @@ impl BrowserManager {
             .await?;
 
         if let Some(ref error_text) = nav_result.error_text {
-            return Err(format!("Navigation failed: {}", error_text));
+            return Err(BrowserError::Other(format!("Navigation failed: {}", error_text)));
         }
 
         self.wait_for_lifecycle(wait_until, &session_id, &mut lifecycle_rx)
@@ -469,7 +487,7 @@ impl BrowserManager {
         wait_until: WaitUntil,
         session_id: &str,
         rx: &mut broadcast::Receiver<CdpEvent>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BrowserError> {
         let event_name = match wait_until {
             WaitUntil::Load => "Page.loadEventFired",
             WaitUntil::DomContentLoaded => "Page.domContentEventFired",
@@ -485,46 +503,46 @@ impl BrowserManager {
                         if event.method == event_name
                             && event.session_id.as_deref() == Some(session_id)
                         {
-                            return Ok(());
+                            return Ok::<(), BrowserError>(());
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
-            Err("Event stream closed".to_string())
+            Err(BrowserError::Other("Event stream closed".to_string()))
         })
         .await
-        .map_err(|_| format!("Timeout waiting for {}", event_name))?
+        .map_err(|_| BrowserError::Other(format!("Timeout waiting for {}", event_name)))?
     }
 
     async fn wait_for_network_idle(
         &self,
         session_id: &str,
         rx: &mut broadcast::Receiver<CdpEvent>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BrowserError> {
         let timeout = tokio::time::Duration::from_millis(self.default_timeout_ms);
         poll_network_idle(session_id, rx, timeout).await
     }
 
-    pub async fn get_url(&self) -> Result<String, String> {
+    pub async fn get_url(&self) -> Result<String, BrowserError> {
         let result = self.evaluate_simple("location.href").await?;
         Ok(result.as_str().unwrap_or("").to_string())
     }
 
-    pub async fn get_title(&self) -> Result<String, String> {
+    pub async fn get_title(&self) -> Result<String, BrowserError> {
         let result = self.evaluate_simple("document.title").await?;
         Ok(result.as_str().unwrap_or("").to_string())
     }
 
-    pub async fn get_content(&self) -> Result<String, String> {
+    pub async fn get_content(&self) -> Result<String, BrowserError> {
         let result = self
             .evaluate_simple("document.documentElement.outerHTML")
             .await?;
         Ok(result.as_str().unwrap_or("").to_string())
     }
 
-    pub async fn evaluate(&self, script: &str, _args: Option<Value>) -> Result<Value, String> {
+    pub async fn evaluate(&self, script: &str, _args: Option<Value>) -> Result<Value, BrowserError> {
         let session_id = self.active_session_id()?.to_string();
 
         let result: EvaluateResult = self
@@ -546,13 +564,13 @@ impl BrowserManager {
                 .as_ref()
                 .and_then(|e| e.description.as_deref())
                 .unwrap_or(&details.text);
-            return Err(format!("Evaluation error: {}", msg));
+            return Err(BrowserError::Other(format!("Evaluation error: {}", msg)));
         }
 
         Ok(result.result.value.unwrap_or(Value::Null))
     }
 
-    async fn evaluate_simple(&self, expression: &str) -> Result<Value, String> {
+    async fn evaluate_simple(&self, expression: &str) -> Result<Value, BrowserError> {
         self.evaluate(expression, None).await
     }
 
@@ -560,13 +578,13 @@ impl BrowserManager {
         &self,
         wait_until: WaitUntil,
         session_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), BrowserError> {
         let mut rx = self.client.subscribe();
         self.wait_for_lifecycle(wait_until, session_id, &mut rx)
             .await
     }
 
-    pub async fn close(&mut self) -> Result<(), String> {
+    pub async fn close(&mut self) -> Result<(), BrowserError> {
         if self.browser_process.is_some() {
             // Only send Browser.close when we launched the browser ourselves.
             // For external connections (--auto-connect, --cdp) we just disconnect
@@ -623,11 +641,11 @@ impl BrowserManager {
         stripped.split('/').next().unwrap_or(stripped)
     }
 
-    pub fn active_target_id(&self) -> Result<&str, String> {
+    pub fn active_target_id(&self) -> Result<&str, BrowserError> {
         self.pages
             .get(self.active_page_index)
             .map(|p| p.target_id.as_str())
-            .ok_or_else(|| "No active page".to_string())
+            .ok_or(BrowserError::NoActivePage)
     }
 
     /// Returns true if this manager was connected via CDP (as opposed to local launch).
@@ -637,7 +655,7 @@ impl BrowserManager {
 
     /// Ensures the browser has at least one page. If `pages` is empty, creates a new
     /// about:blank page and attaches to it.
-    pub async fn ensure_page(&mut self) -> Result<(), String> {
+    pub async fn ensure_page(&mut self) -> Result<(), BrowserError> {
         if !self.pages.is_empty() {
             return Ok(());
         }
@@ -710,7 +728,7 @@ impl BrowserManager {
             .collect()
     }
 
-    pub async fn tab_new(&mut self, url: Option<&str>) -> Result<Value, String> {
+    pub async fn tab_new(&mut self, url: Option<&str>) -> Result<Value, BrowserError> {
         let target_url = url.unwrap_or("about:blank");
 
         let result: CreateTargetResult = self
@@ -751,13 +769,13 @@ impl BrowserManager {
         Ok(json!({ "index": index, "url": target_url }))
     }
 
-    pub async fn tab_switch(&mut self, index: usize) -> Result<Value, String> {
+    pub async fn tab_switch(&mut self, index: usize) -> Result<Value, BrowserError> {
         if index >= self.pages.len() {
-            return Err(format!(
+            return Err(BrowserError::Other(format!(
                 "Tab index {} out of range (0-{})",
                 index,
                 self.pages.len().saturating_sub(1)
-            ));
+            )));
         }
 
         self.active_page_index = index;
@@ -781,15 +799,15 @@ impl BrowserManager {
         Ok(json!({ "index": index, "url": url, "title": title }))
     }
 
-    pub async fn tab_close(&mut self, index: Option<usize>) -> Result<Value, String> {
+    pub async fn tab_close(&mut self, index: Option<usize>) -> Result<Value, BrowserError> {
         let target_index = index.unwrap_or(self.active_page_index);
 
         if target_index >= self.pages.len() {
-            return Err(format!("Tab index {} out of range", target_index));
+            return Err(BrowserError::Other(format!("Tab index {} out of range", target_index)));
         }
 
         if self.pages.len() <= 1 {
-            return Err("Cannot close the last tab".to_string());
+            return Err(BrowserError::Other("Cannot close the last tab".to_string()));
         }
 
         let page = self.pages.remove(target_index);
@@ -824,7 +842,7 @@ impl BrowserManager {
         height: i32,
         device_scale_factor: f64,
         mobile: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
         self.client
             .send_command(
@@ -841,7 +859,7 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub async fn set_user_agent(&self, user_agent: &str) -> Result<(), String> {
+    pub async fn set_user_agent(&self, user_agent: &str) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
         self.client
             .send_command(
@@ -857,7 +875,7 @@ impl BrowserManager {
         &self,
         media: Option<&str>,
         features: Option<Vec<(String, String)>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
         let mut params = json!({});
         if let Some(m) = media {
@@ -876,7 +894,7 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub async fn bring_to_front(&self) -> Result<(), String> {
+    pub async fn bring_to_front(&self) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
         self.client
             .send_command("Page.bringToFront", None, Some(session_id))
@@ -884,7 +902,7 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub async fn set_timezone(&self, timezone_id: &str) -> Result<(), String> {
+    pub async fn set_timezone(&self, timezone_id: &str) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
         self.client
             .send_command(
@@ -896,7 +914,7 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub async fn set_locale(&self, locale: &str) -> Result<(), String> {
+    pub async fn set_locale(&self, locale: &str) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
         self.client
             .send_command(
@@ -913,7 +931,7 @@ impl BrowserManager {
         latitude: f64,
         longitude: f64,
         accuracy: Option<f64>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
         self.client
             .send_command(
@@ -929,7 +947,7 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub async fn grant_permissions(&self, permissions: &[String]) -> Result<(), String> {
+    pub async fn grant_permissions(&self, permissions: &[String]) -> Result<(), BrowserError> {
         self.client
             .send_command(
                 "Browser.grantPermissions",
@@ -944,7 +962,7 @@ impl BrowserManager {
         &self,
         accept: bool,
         prompt_text: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
         let mut params = json!({ "accept": accept });
         if let Some(text) = prompt_text {
@@ -960,7 +978,7 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub async fn upload_files(&self, selector: &str, files: &[String]) -> Result<(), String> {
+    pub async fn upload_files(&self, selector: &str, files: &[String]) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
 
         let node_result = self
@@ -1030,7 +1048,7 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub async fn add_script_to_evaluate(&self, source: &str) -> Result<String, String> {
+    pub async fn add_script_to_evaluate(&self, source: &str) -> Result<String, BrowserError> {
         let session_id = self.active_session_id()?;
         let result = self
             .client
@@ -1072,7 +1090,7 @@ impl BrowserManager {
         self.pages.clone()
     }
 
-    pub async fn set_download_behavior(&self, download_path: &str) -> Result<(), String> {
+    pub async fn set_download_behavior(&self, download_path: &str) -> Result<(), BrowserError> {
         let session_id = self.active_session_id()?;
         self.client
             .send_command(
@@ -1098,7 +1116,7 @@ async fn poll_network_idle(
     session_id: &str,
     rx: &mut broadcast::Receiver<CdpEvent>,
     overall_timeout: tokio::time::Duration,
-) -> Result<(), String> {
+) -> Result<(), BrowserError> {
     let pending = Arc::new(Mutex::new(HashSet::<String>::new()));
 
     tokio::time::timeout(overall_timeout, async {
@@ -1162,14 +1180,14 @@ async fn poll_network_idle(
         Ok(())
     })
     .await
-    .map_err(|_| "Timeout waiting for networkidle".to_string())?
+    .map_err(|_| BrowserError::Other("Timeout waiting for networkidle".to_string()))?
 }
 
 async fn connect_cdp_with_retry(
     ws_url: &str,
     total_timeout: Duration,
     poll_interval: Duration,
-) -> Result<CdpClient, String> {
+) -> Result<CdpClient, BrowserError> {
     let deadline = Instant::now() + total_timeout;
 
     loop {
@@ -1177,7 +1195,7 @@ async fn connect_cdp_with_retry(
             Ok(client) => return Ok(client),
             Err(err) => {
                 if Instant::now() >= deadline {
-                    return Err(err);
+                    return Err(BrowserError::ConnectionFailed(err));
                 }
             }
         }
@@ -1189,7 +1207,7 @@ async fn connect_cdp_with_retry(
 async fn initialize_lightpanda_manager(
     ws_url: String,
     process: BrowserProcess,
-) -> Result<BrowserManager, String> {
+) -> Result<BrowserManager, BrowserError> {
     let deadline = Instant::now() + LIGHTPANDA_TARGET_INIT_TIMEOUT;
     let mut process = Some(process);
 
@@ -1204,7 +1222,7 @@ async fn initialize_lightpanda_manager(
             Ok(client) => client,
             Err(err) => {
                 if Instant::now() >= deadline {
-                    return Err(lightpanda_target_init_timeout(Some(&err)));
+                    return Err(lightpanda_target_init_timeout(Some(&err.to_string())));
                 }
                 tokio::time::sleep(LIGHTPANDA_CDP_CONNECT_POLL_INTERVAL).await;
                 continue;
@@ -1227,7 +1245,7 @@ async fn initialize_lightpanda_manager(
             }
             Err(err) => {
                 if Instant::now() >= deadline {
-                    return Err(lightpanda_target_init_timeout(Some(&err)));
+                    return Err(lightpanda_target_init_timeout(Some(&err.to_string())));
                 }
                 tokio::time::sleep(LIGHTPANDA_CDP_CONNECT_POLL_INTERVAL).await;
             }
@@ -1238,7 +1256,7 @@ async fn initialize_lightpanda_manager(
 async fn discover_and_attach_lightpanda_targets(
     manager: &mut BrowserManager,
     deadline: Instant,
-) -> Result<(), String> {
+) -> Result<(), BrowserError> {
     run_with_lightpanda_deadline(
         deadline,
         manager.discover_and_attach_targets(),
@@ -1255,9 +1273,9 @@ async fn run_with_lightpanda_deadline<F, T>(
     deadline: Instant,
     operation: F,
     timeout_context: &'static str,
-) -> Result<T, String>
+) -> Result<T, BrowserError>
 where
-    F: Future<Output = Result<T, String>>,
+    F: Future<Output = Result<T, BrowserError>>,
 {
     let remaining = remaining_until(deadline)
         .ok_or_else(|| lightpanda_target_init_timeout(Some("deadline expired before retry")))?;
@@ -1268,7 +1286,7 @@ where
     }
 }
 
-fn lightpanda_target_init_timeout(last_error: Option<&str>) -> String {
+fn lightpanda_target_init_timeout(last_error: Option<&str>) -> BrowserError {
     let mut message = format!(
         "Timed out after {}ms waiting for Lightpanda Target domain to initialize",
         LIGHTPANDA_TARGET_INIT_TIMEOUT.as_millis(),
@@ -1276,10 +1294,10 @@ fn lightpanda_target_init_timeout(last_error: Option<&str>) -> String {
     if let Some(last_error) = last_error {
         message.push_str(&format!("\nLast error: {}", last_error));
     }
-    message
+    BrowserError::Other(message)
 }
 
-async fn resolve_cdp_url(input: &str) -> Result<String, String> {
+async fn resolve_cdp_url(input: &str) -> Result<String, BrowserError> {
     if input.starts_with("ws://") || input.starts_with("wss://") {
         return Ok(input.to_string());
     }
@@ -1290,18 +1308,18 @@ async fn resolve_cdp_url(input: &str) -> Result<String, String> {
             .host_str()
             .ok_or_else(|| format!("No host in CDP URL: {}", input))?;
         let port = parsed.port().unwrap_or(9222);
-        return discover_cdp_url(host, port).await;
+        return discover_cdp_url(host, port).await.map_err(BrowserError::from);
     }
 
     // Try as numeric port
     if let Ok(port) = input.parse::<u16>() {
-        return discover_cdp_url("127.0.0.1", port).await;
+        return discover_cdp_url("127.0.0.1", port).await.map_err(BrowserError::from);
     }
 
-    Err(format!(
+    Err(BrowserError::Other(format!(
         "Invalid CDP target: {}. Use ws://, http://, or a port number.",
         input
-    ))
+    )))
 }
 
 #[cfg(test)]
@@ -1432,7 +1450,7 @@ mod tests {
                 deadline,
                 async {
                     sleep(Duration::from_millis(100)).await;
-                    Ok::<(), String>(())
+                    Ok::<(), BrowserError>(())
                 },
                 "Target domain initialization attempt exceeded the remaining startup deadline",
             ),
@@ -1441,10 +1459,11 @@ mod tests {
         .expect("outer timeout should not fire")
         .unwrap_err();
 
-        assert!(err.contains(
+        let err_str = err.to_string();
+        assert!(err_str.contains(
             "Timed out after 10000ms waiting for Lightpanda Target domain to initialize"
         ));
-        assert!(err.contains("remaining startup deadline"));
+        assert!(err_str.contains("remaining startup deadline"));
     }
 
     #[tokio::test]
@@ -1452,22 +1471,27 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(1);
         let err = run_with_lightpanda_deadline(
             deadline,
-            async { Err::<(), String>("Target.getTargets failed".to_string()) },
+            async {
+                Err::<(), BrowserError>(BrowserError::Other(
+                    "Target.getTargets failed".to_string(),
+                ))
+            },
             "unused timeout context",
         )
         .await
         .unwrap_err();
 
-        assert_eq!(err, "Target.getTargets failed");
+        assert_eq!(err.to_string(), "Target.getTargets failed");
     }
 
     #[test]
     fn test_lightpanda_target_init_timeout_includes_last_error() {
         let err = lightpanda_target_init_timeout(Some("Target.setDiscoverTargets failed"));
-        assert!(err.contains(
+        let err_str = err.to_string();
+        assert!(err_str.contains(
             "Timed out after 10000ms waiting for Lightpanda Target domain to initialize"
         ));
-        assert!(err.contains("Target.setDiscoverTargets failed"));
+        assert!(err_str.contains("Target.setDiscoverTargets failed"));
     }
 
     #[test]
@@ -1642,6 +1666,7 @@ mod tests {
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
+            .to_string()
             .contains("Timeout waiting for networkidle"));
     }
 }

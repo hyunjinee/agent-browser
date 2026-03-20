@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use super::cdp::client::CdpClient;
 use super::cdp::types::EvaluateParams;
 use super::cookies::{self, Cookie};
+use super::errors::StateError;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +39,7 @@ pub async fn save_state(
     path: Option<&str>,
     session_name: Option<&str>,
     session_id_str: &str,
-) -> Result<String, String> {
+) -> Result<String, StateError> {
     let cookies = cookies::get_cookies(client, session_id, None).await?;
 
     // Get current origin's storage
@@ -129,7 +130,7 @@ pub async fn save_state(
     Ok(save_path)
 }
 
-pub async fn load_state(client: &CdpClient, session_id: &str, path: &str) -> Result<(), String> {
+pub async fn load_state(client: &CdpClient, session_id: &str, path: &str) -> Result<(), StateError> {
     let json_str = if path.ends_with(".enc") {
         let key = std::env::var("AGENT_BROWSER_ENCRYPTION_KEY").map_err(|_| {
             "Encrypted state file requires AGENT_BROWSER_ENCRYPTION_KEY".to_string()
@@ -150,10 +151,10 @@ pub async fn load_state(client: &CdpClient, session_id: &str, path: &str) -> Res
                         String::from_utf8(decrypted)
                             .map_err(|de| format!("Decrypted state is not valid UTF-8: {}", de))?
                     } else {
-                        return Err(format!("Failed to read state from {}: {}", path, e));
+                        return Err(StateError::Other(format!("Failed to read state from {}: {}", path, e)));
                     }
                 } else {
-                    return Err(format!("Failed to read state from {}: {}", path, e));
+                    return Err(StateError::Other(format!("Failed to read state from {}: {}", path, e)));
                 }
             }
         }
@@ -246,7 +247,7 @@ fn is_encrypted_state(path: &std::path::Path) -> bool {
     path.to_string_lossy().ends_with(".json.enc")
 }
 
-pub fn state_list() -> Result<Value, String> {
+pub fn state_list() -> Result<Value, StateError> {
     let dir = get_sessions_dir();
     if !dir.exists() {
         return Ok(json!({ "files": [], "directory": dir.to_string_lossy() }));
@@ -287,7 +288,7 @@ pub fn state_list() -> Result<Value, String> {
     Ok(json!({ "files": files, "directory": dir.to_string_lossy() }))
 }
 
-pub fn state_show(path: &str) -> Result<Value, String> {
+pub fn state_show(path: &str) -> Result<Value, StateError> {
     let encrypted = path.ends_with(".enc");
     let json_str = if encrypted {
         let key = std::env::var("AGENT_BROWSER_ENCRYPTION_KEY").map_err(|_| {
@@ -326,7 +327,7 @@ pub fn state_show(path: &str) -> Result<Value, String> {
     }))
 }
 
-pub fn state_clear(path: Option<&str>) -> Result<Value, String> {
+pub fn state_clear(path: Option<&str>) -> Result<Value, StateError> {
     if let Some(p) = path {
         fs::remove_file(p).map_err(|e| format!("Failed to delete state: {}", e))?;
         return Ok(json!({ "deleted": p }));
@@ -351,7 +352,7 @@ pub fn state_clear(path: Option<&str>) -> Result<Value, String> {
     Ok(json!({ "deleted": count }))
 }
 
-pub fn state_clean(max_age_days: u64) -> Result<Value, String> {
+pub fn state_clean(max_age_days: u64) -> Result<Value, StateError> {
     let dir = get_sessions_dir();
     if !dir.exists() {
         return Ok(json!({ "cleaned": 0, "keptCount": 0, "days": max_age_days }));
@@ -387,10 +388,12 @@ pub fn state_clean(max_age_days: u64) -> Result<Value, String> {
     Ok(json!({ "cleaned": deleted, "keptCount": kept, "days": max_age_days }))
 }
 
-pub fn state_rename(old_path: &str, new_name: &str) -> Result<Value, String> {
+pub fn state_rename(old_path: &str, new_name: &str) -> Result<Value, StateError> {
     let old = PathBuf::from(old_path);
     if !old.exists() {
-        return Err(format!("State file not found: {}", old_path));
+        return Err(StateError::NotFound {
+            path: old_path.to_string(),
+        });
     }
 
     let fallback = PathBuf::from(".");
@@ -406,7 +409,7 @@ pub fn state_rename(old_path: &str, new_name: &str) -> Result<Value, String> {
     }))
 }
 
-fn encrypt_data(data: &[u8], key_str: &str) -> Result<Vec<u8>, String> {
+fn encrypt_data(data: &[u8], key_str: &str) -> Result<Vec<u8>, StateError> {
     let mut hasher = Sha256::new();
     hasher.update(key_str.as_bytes());
     let key_bytes = hasher.finalize();
@@ -425,9 +428,9 @@ fn encrypt_data(data: &[u8], key_str: &str) -> Result<Vec<u8>, String> {
     Ok(result)
 }
 
-fn decrypt_data(data: &[u8], key_str: &str) -> Result<Vec<u8>, String> {
+fn decrypt_data(data: &[u8], key_str: &str) -> Result<Vec<u8>, StateError> {
     if data.len() < 13 {
-        return Err("Ciphertext too short".to_string());
+        return Err(StateError::Other("Ciphertext too short".to_string()));
     }
     let (nonce_bytes, ciphertext) = data.split_at(12);
 
@@ -548,7 +551,7 @@ mod tests {
     fn test_state_rename_nonexistent() {
         let result = state_rename("/tmp/nonexistent-agent-browser-state-file.json", "new-name");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found"));
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[test]

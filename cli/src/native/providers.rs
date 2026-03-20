@@ -6,6 +6,8 @@
 use serde_json::{json, Value};
 use std::env;
 
+use super::errors::ProviderError;
+
 /// Provider session info for cleanup on failure.
 pub struct ProviderSession {
     pub provider: String,
@@ -16,16 +18,15 @@ pub struct ProviderSession {
 /// along with session info for cleanup on failure.
 pub async fn connect_provider(
     provider_name: &str,
-) -> Result<(String, Option<ProviderSession>), String> {
+) -> Result<(String, Option<ProviderSession>), ProviderError> {
     match provider_name.to_lowercase().as_str() {
         "browserbase" => connect_browserbase().await,
         "browserless" => connect_browserless().await,
         "browser-use" | "browseruse" => connect_browser_use().await,
         "kernel" => connect_kernel().await,
-        _ => Err(format!(
-            "Unknown provider '{}'. Supported: browserbase, browserless, browser-use, kernel",
-            provider_name
-        )),
+        _ => Err(ProviderError::UnknownProvider {
+            name: provider_name.to_string(),
+        }),
     }
 }
 
@@ -84,9 +85,9 @@ pub async fn close_provider_session(session: &ProviderSession) {
     }
 }
 
-async fn connect_browserbase() -> Result<(String, Option<ProviderSession>), String> {
+async fn connect_browserbase() -> Result<(String, Option<ProviderSession>), ProviderError> {
     let api_key = env::var("BROWSERBASE_API_KEY")
-        .map_err(|_| "BROWSERBASE_API_KEY environment variable is not set")?;
+        .map_err(|_| ProviderError::MissingApiKey { env_var: "BROWSERBASE_API_KEY".to_string() })?;
 
     let client = reqwest::Client::new();
     let response = client
@@ -107,7 +108,7 @@ async fn connect_browserbase() -> Result<(String, Option<ProviderSession>), Stri
             "Browserbase API error ({}): {}",
             status.as_u16(),
             body
-        ));
+        ).into());
     }
 
     let json: Value =
@@ -134,9 +135,9 @@ async fn connect_browserbase() -> Result<(String, Option<ProviderSession>), Stri
     ))
 }
 
-async fn connect_browserless() -> Result<(String, Option<ProviderSession>), String> {
+async fn connect_browserless() -> Result<(String, Option<ProviderSession>), ProviderError> {
     let api_key = env::var("BROWSERLESS_API_KEY")
-        .map_err(|_| "BROWSERLESS_API_KEY environment variable is not set")?;
+        .map_err(|_| ProviderError::MissingApiKey { env_var: "BROWSERLESS_API_KEY".to_string() })?;
 
     let api_url = env::var("BROWSERLESS_API_URL")
         .unwrap_or_else(|_| "https://production-sfo.browserless.io".to_string());
@@ -149,7 +150,7 @@ async fn connect_browserless() -> Result<(String, Option<ProviderSession>), Stri
             "BROWSERLESS_BROWSER_TYPE \"{}\" is not supported. Only {} are allowed.",
             browser_type,
             supported.join(", ")
-        ));
+        ).into());
     }
 
     let ttl: u64 = env::var("BROWSERLESS_TTL")
@@ -187,7 +188,7 @@ async fn connect_browserless() -> Result<(String, Option<ProviderSession>), Stri
             "Browserless API error ({}): {}",
             status.as_u16(),
             body
-        ));
+        ).into());
     }
 
     let json: Value =
@@ -215,9 +216,9 @@ async fn connect_browserless() -> Result<(String, Option<ProviderSession>), Stri
     ))
 }
 
-async fn connect_browser_use() -> Result<(String, Option<ProviderSession>), String> {
+async fn connect_browser_use() -> Result<(String, Option<ProviderSession>), ProviderError> {
     let api_key = env::var("BROWSER_USE_API_KEY")
-        .map_err(|_| "BROWSER_USE_API_KEY environment variable is not set")?;
+        .map_err(|_| ProviderError::MissingApiKey { env_var: "BROWSER_USE_API_KEY".to_string() })?;
 
     let client = reqwest::Client::new();
     let response = client
@@ -240,7 +241,7 @@ async fn connect_browser_use() -> Result<(String, Option<ProviderSession>), Stri
             "Browser Use API error ({}): {}",
             status.as_u16(),
             body
-        ));
+        ).into());
     }
 
     let json: Value =
@@ -268,7 +269,7 @@ async fn connect_browser_use() -> Result<(String, Option<ProviderSession>), Stri
     ))
 }
 
-async fn connect_kernel() -> Result<(String, Option<ProviderSession>), String> {
+async fn connect_kernel() -> Result<(String, Option<ProviderSession>), ProviderError> {
     let api_key = env::var("KERNEL_API_KEY").ok();
     let endpoint =
         env::var("KERNEL_ENDPOINT").unwrap_or_else(|_| "https://api.onkernel.com".to_string());
@@ -322,7 +323,7 @@ async fn connect_kernel() -> Result<(String, Option<ProviderSession>), String> {
             "Kernel API error ({}): {}",
             status.as_u16(),
             resp_body
-        ));
+        ).into());
     }
 
     let json: Value =

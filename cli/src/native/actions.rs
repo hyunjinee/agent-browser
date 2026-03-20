@@ -974,9 +974,9 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
 /// Connect to a running Chrome via auto-discovery and open a fresh tab so
 /// subsequent navigations don't hijack the user's existing tabs.
 async fn connect_auto_with_fresh_tab() -> Result<BrowserManager, String> {
-    let mut mgr = BrowserManager::connect_auto().await?;
-    mgr.tab_new(None).await?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let mut mgr = BrowserManager::connect_auto().await.map_err(|e| e.to_string())?;
+    mgr.tab_new(None).await.map_err(|e| e.to_string())?;
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let _ = mgr
         .client
         .send_command("Page.bringToFront", None, Some(&session_id))
@@ -989,7 +989,7 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
     let engine = env::var("AGENT_BROWSER_ENGINE").ok();
 
     if let Ok(cdp) = env::var("AGENT_BROWSER_CDP") {
-        let mgr = BrowserManager::connect_cdp(&cdp).await?;
+        let mgr = BrowserManager::connect_cdp(&cdp).await.map_err(|e| e.to_string())?;
         state.reset_input_state();
         state.browser = Some(mgr);
         state.subscribe_to_browser_events();
@@ -1009,7 +1009,7 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
         return Ok(());
     }
 
-    let mgr = BrowserManager::launch(options, engine.as_deref()).await?;
+    let mgr = BrowserManager::launch(options, engine.as_deref()).await.map_err(|e| e.to_string())?;
     state.reset_input_state();
     state.browser = Some(mgr);
     state.subscribe_to_browser_events();
@@ -1117,7 +1117,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
 
     if needs_relaunch {
         if let Some(ref mut b) = state.browser {
-            b.close().await?;
+            b.close().await.map_err(|e| e.to_string())?;
             state.browser = None;
             state.reset_input_state();
             state.update_stream_client().await;
@@ -1153,11 +1153,11 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         storage_state,
         allow_file_access,
         executable_path.as_deref(),
-    )?;
+    ).map_err(|e| e.to_string())?;
 
     if let Some(url) = cdp_url {
         state.reset_input_state();
-        state.browser = Some(BrowserManager::connect_cdp(url).await?);
+        state.browser = Some(BrowserManager::connect_cdp(url).await.map_err(|e| e.to_string())?);
         state.subscribe_to_browser_events();
         state.start_fetch_handler();
         state.update_stream_client().await;
@@ -1166,7 +1166,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
 
     if let Some(port) = cdp_port {
         state.reset_input_state();
-        state.browser = Some(BrowserManager::connect_cdp(&port.to_string()).await?);
+        state.browser = Some(BrowserManager::connect_cdp(&port.to_string()).await.map_err(|e| e.to_string())?);
         state.subscribe_to_browser_events();
         state.start_fetch_handler();
         state.update_stream_client().await;
@@ -1191,7 +1191,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
                 return launch_safari(cmd, state).await;
             }
             _ => {
-                let (ws_url, provider_session) = providers::connect_provider(provider).await?;
+                let (ws_url, provider_session) = providers::connect_provider(provider).await.map_err(|e| e.to_string())?;
                 match BrowserManager::connect_cdp(&ws_url).await {
                     Ok(mgr) => {
                         state.reset_input_state();
@@ -1205,7 +1205,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
                         if let Some(ref ps) = provider_session {
                             providers::close_provider_session(ps).await;
                         }
-                        return Err(e);
+                        return Err(e.to_string());
                     }
                 }
             }
@@ -1284,7 +1284,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
     }
 
     state.reset_input_state();
-    state.browser = Some(BrowserManager::launch(options, engine.as_deref()).await?);
+    state.browser = Some(BrowserManager::launch(options, engine.as_deref()).await.map_err(|e| e.to_string())?);
     state.subscribe_to_browser_events();
     state.start_fetch_handler();
     state.update_stream_client().await;
@@ -1409,7 +1409,7 @@ async fn handle_navigate(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
     if let Some(ref wb) = state.webdriver_backend {
         if state.browser.is_none() {
             state.ref_map.clear();
-            wb.navigate(url).await?;
+            wb.navigate(url).await.map_err(|e| e.to_string())?;
             let new_url = wb.get_url().await.unwrap_or_else(|_| url.to_string());
             let title = wb.get_title().await.unwrap_or_default();
             return Ok(json!({ "url": new_url, "title": title }));
@@ -1453,7 +1453,7 @@ async fn handle_navigate(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
             // Fetch.enable is idempotent — safe even if domain filter or
             // routes already enabled it. Wildcard ensures we see all requests.
             if first_origin_header {
-                let session_id = mgr.active_session_id()?.to_string();
+                let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
                 mgr.client
                     .send_command(
                         "Fetch.enable",
@@ -1466,7 +1466,7 @@ async fn handle_navigate(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
     }
 
     state.ref_map.clear();
-    mgr.navigate(url, wait_until).await
+    mgr.navigate(url, wait_until).await.map_err(|e| e.to_string())
 }
 
 async fn handle_url(state: &DaemonState) -> Result<Value, String> {
@@ -1477,7 +1477,7 @@ async fn handle_url(state: &DaemonState) -> Result<Value, String> {
         }
     }
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let url = mgr.get_url().await?;
+    let url = mgr.get_url().await.map_err(|e| e.to_string())?;
     Ok(json!({ "url": url }))
 }
 
@@ -1494,7 +1494,7 @@ async fn handle_inspect(state: &mut DaemonState) -> Result<Value, String> {
         server.shutdown();
     }
 
-    let target_id = mgr.active_target_id()?.to_string();
+    let target_id = mgr.active_target_id().map_err(|e| e.to_string())?.to_string();
     let chrome_hp = mgr.chrome_host_port().to_string();
     let proxy_handle = mgr.client.inspect_handle();
 
@@ -1533,7 +1533,7 @@ async fn handle_title(state: &DaemonState) -> Result<Value, String> {
         }
     }
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let title = mgr.get_title().await?;
+    let title = mgr.get_title().await.map_err(|e| e.to_string())?;
     Ok(json!({ "title": title }))
 }
 
@@ -1546,7 +1546,7 @@ async fn handle_content(state: &DaemonState) -> Result<Value, String> {
         }
     }
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let html = mgr.get_content().await?;
+    let html = mgr.get_content().await.map_err(|e| e.to_string())?;
     let url = mgr.get_url().await.unwrap_or_default();
     Ok(json!({ "html": html, "origin": url }))
 }
@@ -1569,7 +1569,7 @@ async fn handle_evaluate(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
         .and_then(|v| v.as_str())
         .ok_or("Missing 'script' parameter")?;
 
-    let result = mgr.evaluate(script, None).await?;
+    let result = mgr.evaluate(script, None).await.map_err(|e| e.to_string())?;
     let url = mgr.get_url().await.unwrap_or_default();
     Ok(json!({ "result": result, "origin": url }))
 }
@@ -1590,7 +1590,7 @@ async fn handle_close(state: &mut DaemonState) -> Result<Value, String> {
         }
     }
     if let Some(ref mut mgr) = state.browser {
-        mgr.close().await?;
+        mgr.close().await.map_err(|e| e.to_string())?;
     }
     state.browser = None;
     state.reset_input_state();
@@ -1634,7 +1634,7 @@ async fn handle_close(state: &mut DaemonState) -> Result<Value, String> {
 
 async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let options = SnapshotOptions {
         selector: cmd
@@ -1726,7 +1726,7 @@ async fn handle_screenshot(cmd: &Value, state: &mut DaemonState) -> Result<Value
         }
     }
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let format = cmd
         .get("format")
@@ -1799,7 +1799,7 @@ async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
     }
 
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let new_tab = cmd.get("newTab").and_then(|v| v.as_bool()).unwrap_or(false);
 
@@ -1834,7 +1834,7 @@ async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
         let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
         state.ref_map.clear();
-        mgr.tab_new(Some(&href)).await?;
+        mgr.tab_new(Some(&href)).await.map_err(|e| e.to_string())?;
 
         return Ok(json!({ "clicked": selector, "newTab": true, "url": href }));
     }
@@ -1857,7 +1857,7 @@ async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
 async fn handle_dblclick(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -1885,7 +1885,7 @@ async fn handle_fill(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
     }
 
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     interaction::fill(&mgr.client, &session_id, &state.ref_map, selector, value).await?;
     Ok(json!({ "filled": selector }))
@@ -1893,7 +1893,7 @@ async fn handle_fill(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
 
 async fn handle_type(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -1920,7 +1920,7 @@ async fn handle_type(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
 
 async fn handle_press(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let key = cmd
         .get("key")
         .and_then(|v| v.as_str())
@@ -1932,7 +1932,7 @@ async fn handle_press(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
 async fn handle_hover(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -1944,7 +1944,7 @@ async fn handle_hover(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
 async fn handle_scroll(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd.get("selector").and_then(|v| v.as_str());
 
     let (mut dx, mut dy) = (
@@ -1969,7 +1969,7 @@ async fn handle_scroll(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
 
 async fn handle_select(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -1994,7 +1994,7 @@ async fn handle_select(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
 
 async fn handle_check(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -2006,7 +2006,7 @@ async fn handle_check(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
 async fn handle_uncheck(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -2018,7 +2018,7 @@ async fn handle_uncheck(cmd: &Value, state: &mut DaemonState) -> Result<Value, S
 
 async fn handle_wait(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let timeout_ms = cmd.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30000);
 
     if let Some(text) = cmd.get("text").and_then(|v| v.as_str()) {
@@ -2048,7 +2048,7 @@ async fn handle_wait(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
     if let Some(load_state) = cmd.get("loadState").and_then(|v| v.as_str()) {
         let wait_until = WaitUntil::from_str(load_state);
         mgr.wait_for_lifecycle_external(wait_until, &session_id)
-            .await?;
+            .await.map_err(|e| e.to_string())?;
         return Ok(json!({ "waited": "load", "state": load_state }));
     }
 
@@ -2059,7 +2059,7 @@ async fn handle_wait(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
 
 async fn handle_gettext(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -2073,7 +2073,7 @@ async fn handle_gettext(cmd: &Value, state: &mut DaemonState) -> Result<Value, S
 
 async fn handle_getattribute(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -2097,7 +2097,7 @@ async fn handle_getattribute(cmd: &Value, state: &mut DaemonState) -> Result<Val
 
 async fn handle_isvisible(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -2112,7 +2112,7 @@ async fn handle_isvisible(cmd: &Value, state: &mut DaemonState) -> Result<Value,
 
 async fn handle_isenabled(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -2127,7 +2127,7 @@ async fn handle_isenabled(cmd: &Value, state: &mut DaemonState) -> Result<Value,
 
 async fn handle_ischecked(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -2151,7 +2151,7 @@ async fn handle_back(state: &mut DaemonState) -> Result<Value, String> {
         }
     }
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    mgr.evaluate("history.back()", None).await?;
+    mgr.evaluate("history.back()", None).await.map_err(|e| e.to_string())?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let url = mgr.get_url().await.unwrap_or_default();
     state.ref_map.clear();
@@ -2169,7 +2169,7 @@ async fn handle_forward(state: &mut DaemonState) -> Result<Value, String> {
         }
     }
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    mgr.evaluate("history.forward()", None).await?;
+    mgr.evaluate("history.forward()", None).await.map_err(|e| e.to_string())?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let url = mgr.get_url().await.unwrap_or_default();
     state.ref_map.clear();
@@ -2187,7 +2187,7 @@ async fn handle_reload(state: &mut DaemonState) -> Result<Value, String> {
         }
     }
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     mgr.client
         .send_command_no_params("Page.reload", Some(&session_id))
@@ -2347,7 +2347,7 @@ async fn handle_cookies_get(cmd: &Value, state: &DaemonState) -> Result<Value, S
         }
     }
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let urls = cmd.get("urls").and_then(|v| v.as_array()).map(|arr| {
         arr.iter()
@@ -2361,7 +2361,7 @@ async fn handle_cookies_get(cmd: &Value, state: &DaemonState) -> Result<Value, S
 
 async fn handle_cookies_set(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let url = mgr.get_url().await.ok();
 
     let cookie_values = if let Some(arr) = cmd.get("cookies").and_then(|v| v.as_array()) {
@@ -2386,14 +2386,14 @@ async fn handle_cookies_set(cmd: &Value, state: &DaemonState) -> Result<Value, S
 
 async fn handle_cookies_clear(state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     cookies::clear_cookies(&mgr.client, &session_id).await?;
     Ok(json!({ "cleared": true }))
 }
 
 async fn handle_storage_get(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let storage_type = cmd.get("type").and_then(|v| v.as_str()).unwrap_or("local");
     let key = cmd.get("key").and_then(|v| v.as_str());
     storage::storage_get(&mgr.client, &session_id, storage_type, key).await
@@ -2401,7 +2401,7 @@ async fn handle_storage_get(cmd: &Value, state: &DaemonState) -> Result<Value, S
 
 async fn handle_storage_set(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let storage_type = cmd.get("type").and_then(|v| v.as_str()).unwrap_or("local");
     let key = cmd
         .get("key")
@@ -2417,7 +2417,7 @@ async fn handle_storage_set(cmd: &Value, state: &DaemonState) -> Result<Value, S
 
 async fn handle_storage_clear(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let storage_type = cmd.get("type").and_then(|v| v.as_str()).unwrap_or("local");
     storage::storage_clear(&mgr.client, &session_id, storage_type).await?;
     Ok(json!({ "cleared": true }))
@@ -2425,7 +2425,7 @@ async fn handle_storage_clear(cmd: &Value, state: &DaemonState) -> Result<Value,
 
 async fn handle_setcontent(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let html = cmd
         .get("html")
         .and_then(|v| v.as_str())
@@ -2436,7 +2436,7 @@ async fn handle_setcontent(cmd: &Value, state: &DaemonState) -> Result<Value, St
 
 async fn handle_headers(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let headers_value = cmd.get("headers").ok_or("Missing 'headers' parameter")?;
 
@@ -2455,7 +2455,7 @@ async fn handle_headers(cmd: &Value, state: &DaemonState) -> Result<Value, Strin
 
 async fn handle_offline(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let offline = cmd.get("offline").and_then(|v| v.as_bool()).unwrap_or(true);
     network::set_offline(&mgr.client, &session_id, offline).await?;
     Ok(json!({ "offline": offline }))
@@ -2471,7 +2471,7 @@ async fn handle_errors(state: &DaemonState) -> Result<Value, String> {
 
 async fn handle_state_save(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let path = cmd.get("path").and_then(|v| v.as_str());
 
     let saved_path = state::save_state(
@@ -2481,25 +2481,25 @@ async fn handle_state_save(cmd: &Value, state: &DaemonState) -> Result<Value, St
         state.session_name.as_deref(),
         &state.session_id,
     )
-    .await?;
+    .await.map_err(|e| e.to_string())?;
 
     Ok(json!({ "saved": true, "path": saved_path }))
 }
 
 async fn handle_state_load(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let path = cmd
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'path' parameter")?;
 
-    state::load_state(&mgr.client, &session_id, path).await?;
+    state::load_state(&mgr.client, &session_id, path).await.map_err(|e| e.to_string())?;
     Ok(json!({ "loaded": true, "path": path }))
 }
 
 async fn handle_state_list() -> Result<Value, String> {
-    state::state_list()
+    state::state_list().map_err(|e| e.to_string())
 }
 
 async fn handle_state_show(cmd: &Value) -> Result<Value, String> {
@@ -2507,17 +2507,17 @@ async fn handle_state_show(cmd: &Value) -> Result<Value, String> {
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'path' parameter")?;
-    state::state_show(path)
+    state::state_show(path).map_err(|e| e.to_string())
 }
 
 async fn handle_state_clear(cmd: &Value) -> Result<Value, String> {
     let path = cmd.get("path").and_then(|v| v.as_str());
-    state::state_clear(path)
+    state::state_clear(path).map_err(|e| e.to_string())
 }
 
 async fn handle_state_clean(cmd: &Value) -> Result<Value, String> {
     let days = cmd.get("days").and_then(|v| v.as_u64()).unwrap_or(30);
-    state::state_clean(days)
+    state::state_clean(days).map_err(|e| e.to_string())
 }
 
 async fn handle_state_rename(cmd: &Value) -> Result<Value, String> {
@@ -2529,7 +2529,7 @@ async fn handle_state_rename(cmd: &Value) -> Result<Value, String> {
         .get("name")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'name' parameter")?;
-    state::state_rename(path, name)
+    state::state_rename(path, name).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -2538,7 +2538,7 @@ async fn handle_state_rename(cmd: &Value) -> Result<Value, String> {
 
 async fn handle_diff_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let compact = cmd
         .get("compact")
@@ -2607,15 +2607,15 @@ async fn handle_diff_url(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
         .unwrap_or(WaitUntil::Load);
 
     // Navigate to URL1 and snapshot
-    mgr.navigate(url1, wait_until).await?;
-    let session_id = mgr.active_session_id()?.to_string();
+    mgr.navigate(url1, wait_until).await.map_err(|e| e.to_string())?;
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let options = SnapshotOptions::default();
     let snap1 =
         snapshot::take_snapshot(&mgr.client, &session_id, &options, &mut state.ref_map, None)
             .await?;
 
     // Navigate to URL2 and snapshot
-    mgr.navigate(url2, wait_until).await?;
+    mgr.navigate(url2, wait_until).await.map_err(|e| e.to_string())?;
     state.ref_map.clear();
     let snap2 =
         snapshot::take_snapshot(&mgr.client, &session_id, &options, &mut state.ref_map, None)
@@ -2645,7 +2645,7 @@ async fn handle_credentials_set(cmd: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'password'")?;
     let url = cmd.get("url").and_then(|v| v.as_str());
-    auth::credentials_set(name, username, password, url)
+    auth::credentials_set(name, username, password, url).map_err(|e| e.to_string())
 }
 
 async fn handle_credentials_get(cmd: &Value) -> Result<Value, String> {
@@ -2653,7 +2653,7 @@ async fn handle_credentials_get(cmd: &Value) -> Result<Value, String> {
         .get("name")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'name'")?;
-    auth::credentials_get(name)
+    auth::credentials_get(name).map_err(|e| e.to_string())
 }
 
 async fn handle_credentials_delete(cmd: &Value) -> Result<Value, String> {
@@ -2661,11 +2661,11 @@ async fn handle_credentials_delete(cmd: &Value) -> Result<Value, String> {
         .get("name")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'name'")?;
-    auth::credentials_delete(name)
+    auth::credentials_delete(name).map_err(|e| e.to_string())
 }
 
 async fn handle_credentials_list() -> Result<Value, String> {
-    auth::credentials_list()
+    auth::credentials_list().map_err(|e| e.to_string())
 }
 
 async fn handle_auth_show(cmd: &Value) -> Result<Value, String> {
@@ -2673,12 +2673,12 @@ async fn handle_auth_show(cmd: &Value) -> Result<Value, String> {
         .get("name")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'name'")?;
-    auth::auth_show(name)
+    auth::auth_show(name).map_err(|e| e.to_string())
 }
 
 async fn handle_mouse(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let event_type = cmd
         .get("eventType")
@@ -2708,7 +2708,7 @@ async fn handle_mouse(cmd: &Value, state: &DaemonState) -> Result<Value, String>
 
 async fn handle_keyboard(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let event_type = cmd
         .get("eventType")
@@ -2750,7 +2750,7 @@ async fn handle_tab_new(cmd: &Value, state: &mut DaemonState) -> Result<Value, S
     let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
     let url = cmd.get("url").and_then(|v| v.as_str());
     state.ref_map.clear();
-    mgr.tab_new(url).await
+    mgr.tab_new(url).await.map_err(|e| e.to_string())
 }
 
 async fn handle_tab_switch(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
@@ -2760,7 +2760,7 @@ async fn handle_tab_switch(cmd: &Value, state: &mut DaemonState) -> Result<Value
         .and_then(|v| v.as_u64())
         .ok_or("Missing 'index' parameter")? as usize;
     state.ref_map.clear();
-    mgr.tab_switch(index).await
+    mgr.tab_switch(index).await.map_err(|e| e.to_string())
 }
 
 async fn handle_tab_close(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
@@ -2770,7 +2770,7 @@ async fn handle_tab_close(cmd: &Value, state: &mut DaemonState) -> Result<Value,
         .and_then(|v| v.as_u64())
         .map(|i| i as usize);
     state.ref_map.clear();
-    mgr.tab_close(index).await
+    mgr.tab_close(index).await.map_err(|e| e.to_string())
 }
 
 async fn handle_viewport(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
@@ -2783,7 +2783,7 @@ async fn handle_viewport(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
         .unwrap_or(1.0);
     let mobile = cmd.get("mobile").and_then(|v| v.as_bool()).unwrap_or(false);
 
-    mgr.set_viewport(width, height, scale, mobile).await?;
+    mgr.set_viewport(width, height, scale, mobile).await.map_err(|e| e.to_string())?;
     Ok(json!({ "width": width, "height": height, "deviceScaleFactor": scale, "mobile": mobile }))
 }
 
@@ -2793,7 +2793,7 @@ async fn handle_user_agent(cmd: &Value, state: &DaemonState) -> Result<Value, St
         .get("userAgent")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'userAgent' parameter")?;
-    mgr.set_user_agent(ua).await?;
+    mgr.set_user_agent(ua).await.map_err(|e| e.to_string())?;
     Ok(json!({ "userAgent": ua }))
 }
 
@@ -2807,7 +2807,7 @@ async fn handle_set_media(cmd: &Value, state: &DaemonState) -> Result<Value, Str
             .collect::<Vec<(String, String)>>()
     });
 
-    mgr.set_emulated_media(media, features).await?;
+    mgr.set_emulated_media(media, features).await.map_err(|e| e.to_string())?;
     Ok(json!({ "set": true }))
 }
 
@@ -2817,7 +2817,7 @@ async fn handle_download(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'path' parameter")?;
-    mgr.set_download_behavior(path).await?;
+    mgr.set_download_behavior(path).await.map_err(|e| e.to_string())?;
     Ok(json!({ "downloadPath": path }))
 }
 
@@ -2827,20 +2827,20 @@ async fn handle_download(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
 
 async fn handle_trace_start(state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     native_tracing::trace_start(&mgr.client, &session_id, &mut state.tracing_state).await
 }
 
 async fn handle_trace_stop(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let path = cmd.get("path").and_then(|v| v.as_str());
     native_tracing::trace_stop(&mgr.client, &session_id, &mut state.tracing_state, path).await
 }
 
 async fn handle_profiler_start(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let categories = cmd.get("categories").and_then(|v| v.as_array()).map(|arr| {
         arr.iter()
             .filter_map(|v| v.as_str().map(String::from))
@@ -2857,7 +2857,7 @@ async fn handle_profiler_start(cmd: &Value, state: &mut DaemonState) -> Result<V
 
 async fn handle_profiler_stop(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let path = cmd.get("path").and_then(|v| v.as_str());
     native_tracing::profiler_stop(&mgr.client, &session_id, &mut state.tracing_state, path).await
 }
@@ -2875,7 +2875,7 @@ async fn handle_recording_start(cmd: &Value, state: &mut DaemonState) -> Result<
 
     let (client, new_session_id) = {
         let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
-        let old_session_id = mgr.active_session_id()?.to_string();
+        let old_session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
         // Capture current URL if no URL specified
         let nav_url = if let Some(u) = recording_url {
@@ -2927,7 +2927,7 @@ async fn handle_recording_start(cmd: &Value, state: &mut DaemonState) -> Result<
             .await?;
 
         let new_session_id = attach_result.session_id.clone();
-        mgr.enable_domains_pub(&new_session_id).await?;
+        mgr.enable_domains_pub(&new_session_id).await.map_err(|e| e.to_string())?;
 
         // Transfer cookies to new context
         if let Some(ref cr) = cookies_result {
@@ -2991,7 +2991,7 @@ async fn handle_recording_restart(cmd: &Value, state: &mut DaemonState) -> Resul
     let result = recording::recording_restart(&mut state.recording_state, path)?;
 
     if let Some(ref browser) = state.browser {
-        let session_id = browser.active_session_id()?.to_string();
+        let session_id = browser.active_session_id().map_err(|e| e.to_string())?.to_string();
         state
             .start_recording_task(browser.client.clone(), session_id)
             .await?;
@@ -3002,7 +3002,7 @@ async fn handle_recording_restart(cmd: &Value, state: &mut DaemonState) -> Resul
 
 async fn handle_pdf(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let params = json!({
         "printBackground": cmd.get("printBackground").and_then(|v| v.as_bool()).unwrap_or(true),
@@ -3053,7 +3053,7 @@ async fn handle_pdf(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
 
 async fn handle_focus(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3065,7 +3065,7 @@ async fn handle_focus(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
 async fn handle_clear(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3077,7 +3077,7 @@ async fn handle_clear(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
 async fn handle_selectall(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3089,7 +3089,7 @@ async fn handle_selectall(cmd: &Value, state: &mut DaemonState) -> Result<Value,
 
 async fn handle_scrollintoview(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3101,7 +3101,7 @@ async fn handle_scrollintoview(cmd: &Value, state: &mut DaemonState) -> Result<V
 
 async fn handle_dispatch(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3127,7 +3127,7 @@ async fn handle_dispatch(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
 
 async fn handle_highlight(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3152,7 +3152,7 @@ async fn handle_tap(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
 
     let sel = selector.ok_or("Missing 'selector' parameter")?;
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     interaction::tap_touch(&mgr.client, &session_id, &state.ref_map, sel).await?;
     Ok(json!({ "tapped": sel }))
@@ -3160,7 +3160,7 @@ async fn handle_tap(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
 
 async fn handle_boundingbox(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3178,7 +3178,7 @@ async fn handle_boundingbox(cmd: &Value, state: &mut DaemonState) -> Result<Valu
 
 async fn handle_innertext(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3192,7 +3192,7 @@ async fn handle_innertext(cmd: &Value, state: &mut DaemonState) -> Result<Value,
 
 async fn handle_innerhtml(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3206,7 +3206,7 @@ async fn handle_innerhtml(cmd: &Value, state: &mut DaemonState) -> Result<Value,
 
 async fn handle_inputvalue(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3220,7 +3220,7 @@ async fn handle_inputvalue(cmd: &Value, state: &mut DaemonState) -> Result<Value
 
 async fn handle_setvalue(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3237,7 +3237,7 @@ async fn handle_setvalue(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
 
 async fn handle_count(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3249,7 +3249,7 @@ async fn handle_count(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
 async fn handle_styles(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -3274,7 +3274,7 @@ async fn handle_styles(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
 
 async fn handle_bringtofront(state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    mgr.bring_to_front().await?;
+    mgr.bring_to_front().await.map_err(|e| e.to_string())?;
     Ok(json!({ "broughtToFront": true }))
 }
 
@@ -3285,7 +3285,7 @@ async fn handle_timezone(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
         .or_else(|| cmd.get("timezone"))
         .and_then(|v| v.as_str())
         .ok_or("Missing 'timezoneId' parameter")?;
-    mgr.set_timezone(timezone).await?;
+    mgr.set_timezone(timezone).await.map_err(|e| e.to_string())?;
     Ok(json!({ "timezoneId": timezone }))
 }
 
@@ -3295,7 +3295,7 @@ async fn handle_locale(cmd: &Value, state: &DaemonState) -> Result<Value, String
         .get("locale")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'locale' parameter")?;
-    mgr.set_locale(locale).await?;
+    mgr.set_locale(locale).await.map_err(|e| e.to_string())?;
     Ok(json!({ "locale": locale }))
 }
 
@@ -3311,7 +3311,7 @@ async fn handle_geolocation(cmd: &Value, state: &DaemonState) -> Result<Value, S
         .ok_or("Missing 'longitude' parameter")?;
     let accuracy = cmd.get("accuracy").and_then(|v| v.as_f64());
 
-    mgr.set_geolocation(latitude, longitude, accuracy).await?;
+    mgr.set_geolocation(latitude, longitude, accuracy).await.map_err(|e| e.to_string())?;
     Ok(json!({ "latitude": latitude, "longitude": longitude }))
 }
 
@@ -3327,7 +3327,7 @@ async fn handle_permissions(cmd: &Value, state: &DaemonState) -> Result<Value, S
         })
         .unwrap_or_default();
 
-    mgr.grant_permissions(&permissions).await?;
+    mgr.grant_permissions(&permissions).await.map_err(|e| e.to_string())?;
     Ok(json!({ "granted": permissions }))
 }
 
@@ -3341,7 +3341,7 @@ async fn handle_dialog(cmd: &Value, state: &DaemonState) -> Result<Value, String
         .unwrap_or(true);
     let prompt_text = cmd.get("promptText").and_then(|v| v.as_str());
 
-    mgr.handle_dialog(accept, prompt_text).await?;
+    mgr.handle_dialog(accept, prompt_text).await.map_err(|e| e.to_string())?;
     Ok(json!({ "handled": true, "accepted": accept }))
 }
 
@@ -3367,7 +3367,7 @@ async fn handle_upload(cmd: &Value, state: &DaemonState) -> Result<Value, String
         })
         .unwrap_or_default();
 
-    mgr.upload_files(selector, &files).await?;
+    mgr.upload_files(selector, &files).await.map_err(|e| e.to_string())?;
     Ok(json!({ "uploaded": files.len(), "selector": selector }))
 }
 
@@ -3395,7 +3395,7 @@ async fn handle_addscript(cmd: &Value, state: &DaemonState) -> Result<Value, Str
             }})"#,
             serde_json::to_string(src_url).unwrap_or_default()
         );
-        mgr.evaluate(&js, None).await?;
+        mgr.evaluate(&js, None).await.map_err(|e| e.to_string())?;
     } else if let Some(source) = content {
         let js = format!(
             r#"(() => {{
@@ -3405,7 +3405,7 @@ async fn handle_addscript(cmd: &Value, state: &DaemonState) -> Result<Value, Str
             }})()"#,
             serde_json::to_string(source).unwrap_or_default()
         );
-        mgr.evaluate(&js, None).await?;
+        mgr.evaluate(&js, None).await.map_err(|e| e.to_string())?;
     }
 
     Ok(json!({ "added": true }))
@@ -3420,7 +3420,7 @@ async fn handle_addinitscript(cmd: &Value, state: &DaemonState) -> Result<Value,
         .and_then(|v| v.as_str())
         .ok_or("Missing 'script' parameter")?;
 
-    let identifier = mgr.add_script_to_evaluate(source).await?;
+    let identifier = mgr.add_script_to_evaluate(source).await.map_err(|e| e.to_string())?;
     Ok(json!({ "added": true, "identifier": identifier }))
 }
 
@@ -3448,7 +3448,7 @@ async fn handle_addstyle(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
             }})"#,
             serde_json::to_string(href).unwrap_or_default()
         );
-        mgr.evaluate(&js, None).await?;
+        mgr.evaluate(&js, None).await.map_err(|e| e.to_string())?;
     } else if let Some(css) = content {
         let js = format!(
             r#"(() => {{
@@ -3458,7 +3458,7 @@ async fn handle_addstyle(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
             }})()"#,
             serde_json::to_string(css).unwrap_or_default()
         );
-        mgr.evaluate(&js, None).await?;
+        mgr.evaluate(&js, None).await.map_err(|e| e.to_string())?;
     }
 
     Ok(json!({ "added": true }))
@@ -3472,7 +3472,7 @@ async fn handle_clipboard(cmd: &Value, state: &DaemonState) -> Result<Value, Str
         .and_then(|v| v.as_str())
         .unwrap_or("read");
 
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     // cfg! is compile-time; assumes the browser runs on the same OS as the CLI binary.
     let modifier: i32 = if cfg!(target_os = "macos") { 4 } else { 2 };
@@ -3488,7 +3488,7 @@ async fn handle_clipboard(cmd: &Value, state: &DaemonState) -> Result<Value, Str
                 "navigator.clipboard.writeText({})",
                 serde_json::to_string(text).unwrap_or_default()
             );
-            mgr.evaluate(&js, None).await?;
+            mgr.evaluate(&js, None).await.map_err(|e| e.to_string())?;
             Ok(json!({ "written": text }))
         }
         "copy" => {
@@ -3502,7 +3502,7 @@ async fn handle_clipboard(cmd: &Value, state: &DaemonState) -> Result<Value, Str
             Ok(json!({ "pasted": true }))
         }
         _ => {
-            let result = mgr.evaluate("navigator.clipboard.readText()", None).await?;
+            let result = mgr.evaluate("navigator.clipboard.readText()", None).await.map_err(|e| e.to_string())?;
             Ok(json!({ "text": result }))
         }
     }
@@ -3510,7 +3510,7 @@ async fn handle_clipboard(cmd: &Value, state: &DaemonState) -> Result<Value, Str
 
 async fn handle_wheel(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let x = cmd.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let y = cmd.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let delta_x = cmd.get("deltaX").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -3553,8 +3553,8 @@ async fn handle_device(cmd: &Value, state: &DaemonState) -> Result<Value, String
         _ => return Err(format!("Unknown device: {}. Supported: iPhone 12, iPhone 14, iPhone 15, iPad, iPad Pro, Pixel 5, Pixel 7, Galaxy S21", name)),
     };
 
-    mgr.set_viewport(width, height, scale, mobile).await?;
-    mgr.set_user_agent(ua).await?;
+    mgr.set_viewport(width, height, scale, mobile).await.map_err(|e| e.to_string())?;
+    mgr.set_user_agent(ua).await.map_err(|e| e.to_string())?;
 
     Ok(json!({
         "device": name,
@@ -3571,7 +3571,7 @@ async fn handle_device(cmd: &Value, state: &DaemonState) -> Result<Value, String
 
 async fn handle_screencast_start(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     if state.screencasting {
         return Err("Screencast already active".to_string());
@@ -3602,7 +3602,7 @@ async fn handle_screencast_start(cmd: &Value, state: &mut DaemonState) -> Result
 
 async fn handle_screencast_stop(state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?;
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?;
 
     if !state.screencasting {
         return Err("No screencast active".to_string());
@@ -3624,7 +3624,7 @@ async fn handle_screencast_stop(state: &mut DaemonState) -> Result<Value, String
 
 async fn handle_waitforurl(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let url_pattern = cmd
         .get("url")
         .and_then(|v| v.as_str())
@@ -3638,7 +3638,7 @@ async fn handle_waitforurl(cmd: &Value, state: &DaemonState) -> Result<Value, St
 
 async fn handle_waitforloadstate(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let load_state = cmd.get("state").and_then(|v| v.as_str()).unwrap_or("load");
     let timeout_ms = cmd.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30000);
 
@@ -3655,7 +3655,7 @@ async fn handle_waitforloadstate(cmd: &Value, state: &DaemonState) -> Result<Val
 
 async fn handle_waitforfunction(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let expression = cmd
         .get("expression")
         .and_then(|v| v.as_str())
@@ -3686,7 +3686,7 @@ async fn handle_waitforfunction(cmd: &Value, state: &DaemonState) -> Result<Valu
 
 async fn handle_frame(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let selector = cmd.get("selector").and_then(|v| v.as_str());
     let name = cmd.get("name").and_then(|v| v.as_str());
@@ -3808,7 +3808,7 @@ async fn handle_frame(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
             }})()"#,
             serde_json::to_string(sel).unwrap_or_default()
         );
-        let result = mgr.evaluate(&js, None).await?;
+        let result = mgr.evaluate(&js, None).await.map_err(|e| e.to_string())?;
         let frame_name = result.as_str().ok_or("Could not find frame for selector")?;
         if let Some(frame_id) = find_frame(frame_tree, Some(frame_name), None) {
             state.active_frame_id = Some(frame_id);
@@ -3844,7 +3844,7 @@ async fn execute_subaction(
         .and_then(|v| v.as_str())
         .unwrap_or("click");
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     match subaction {
         "click" => {
@@ -3970,7 +3970,7 @@ async fn resolve_semantic_locator(
 
 async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let role = cmd
         .get("role")
         .and_then(|v| v.as_str())
@@ -4060,7 +4060,7 @@ async fn handle_semantic_locator(
     param_name: &str,
 ) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let value = cmd
         .get(param_name)
         .and_then(|v| v.as_str())
@@ -4205,7 +4205,7 @@ async fn handle_getbytestid(cmd: &Value, state: &mut DaemonState) -> Result<Valu
 
 async fn handle_nth(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -4270,7 +4270,7 @@ async fn handle_nth(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
 
 async fn handle_find(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let _session_id = mgr.active_session_id()?.to_string();
+    let _session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -4289,13 +4289,13 @@ async fn handle_find(cmd: &Value, state: &DaemonState) -> Result<Value, String> 
         serde_json::to_string(selector).unwrap_or_default()
     );
 
-    let result = mgr.evaluate(&js, None).await?;
+    let result = mgr.evaluate(&js, None).await.map_err(|e| e.to_string())?;
     Ok(json!({ "elements": result, "selector": selector }))
 }
 
 async fn handle_evalhandle(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let script = cmd
         .get("script")
         .and_then(|v| v.as_str())
@@ -4324,7 +4324,7 @@ async fn handle_evalhandle(cmd: &Value, state: &DaemonState) -> Result<Value, St
 
 async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let source = cmd
         .get("source")
         .and_then(|v| v.as_str())
@@ -4386,7 +4386,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
 
 async fn handle_expose(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let name = cmd
         .get("name")
         .and_then(|v| v.as_str())
@@ -4409,7 +4409,7 @@ async fn handle_pause(_state: &DaemonState) -> Result<Value, String> {
 
 async fn handle_multiselect(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let _session_id = mgr.active_session_id()?.to_string();
+    let _session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -4440,13 +4440,13 @@ async fn handle_multiselect(cmd: &Value, state: &DaemonState) -> Result<Value, S
         vals = values_json,
     );
 
-    let result = mgr.evaluate(&js, None).await?;
+    let result = mgr.evaluate(&js, None).await.map_err(|e| e.to_string())?;
     Ok(json!({ "selected": result }))
 }
 
 async fn handle_responsebody(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let url_pattern = cmd
         .get("url")
         .and_then(|v| v.as_str())
@@ -4529,7 +4529,7 @@ async fn handle_responsebody(cmd: &Value, state: &DaemonState) -> Result<Value, 
 
 async fn handle_waitfordownload(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let timeout_ms = cmd.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30000);
 
     let mut rx = mgr.client.subscribe();
@@ -4613,7 +4613,7 @@ async fn handle_window_new(cmd: &Value, state: &mut DaemonState) -> Result<Value
             .get("height")
             .and_then(|v| v.as_i64())
             .unwrap_or(720) as i32;
-        mgr.set_viewport(width, height, 1.0, false).await?;
+        mgr.set_viewport(width, height, 1.0, false).await.map_err(|e| e.to_string())?;
     }
 
     let total = mgr.page_count();
@@ -4624,7 +4624,7 @@ async fn handle_window_new(cmd: &Value, state: &mut DaemonState) -> Result<Value
 
 async fn handle_diff_screenshot(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let baseline_path = cmd
         .get("baseline")
         .and_then(|v| v.as_str())
@@ -4691,7 +4691,7 @@ async fn handle_video_start(cmd: &Value, state: &mut DaemonState) -> Result<Valu
     }
 
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     recording::recording_start(&mut state.recording_state, path)?;
     state
@@ -4719,7 +4719,7 @@ async fn handle_video_stop(state: &mut DaemonState) -> Result<Value, String> {
 /// Begin capturing network traffic for a later HAR export.
 async fn handle_har_start(state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     mgr.client
         .send_command_no_params("Network.enable", Some(&session_id))
         .await?;
@@ -5288,7 +5288,7 @@ async fn build_fetch_patterns(state: &DaemonState) -> Vec<Value> {
 
 async fn handle_route(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let url_pattern = cmd
         .get("url")
         .and_then(|v| v.as_str())
@@ -5340,7 +5340,7 @@ async fn handle_route(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
 async fn handle_unroute(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let url = cmd.get("url").and_then(|v| v.as_str());
 
@@ -5409,7 +5409,7 @@ async fn handle_requests(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
 
 async fn handle_http_credentials(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let username = cmd
         .get("username")
         .and_then(|v| v.as_str())
@@ -5463,7 +5463,7 @@ async fn handle_auth_save(cmd: &Value) -> Result<Value, String> {
         username_selector,
         password_selector,
         submit_selector,
-    )
+    ).map_err(|e| e.to_string())
 }
 
 async fn handle_auth_login(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
@@ -5471,7 +5471,7 @@ async fn handle_auth_login(cmd: &Value, state: &mut DaemonState) -> Result<Value
         .get("name")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'name'")?;
-    let cred = auth::credentials_get_full(name)?;
+    let cred = auth::credentials_get_full(name).map_err(|e| e.to_string())?;
     if cred.url.is_empty() {
         return Err("Credential has no URL".to_string());
     }
@@ -5480,9 +5480,9 @@ async fn handle_auth_login(cmd: &Value, state: &mut DaemonState) -> Result<Value
     let password = cred.password;
 
     let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
-    mgr.navigate(&url, WaitUntil::Load).await?;
+    mgr.navigate(&url, WaitUntil::Load).await.map_err(|e| e.to_string())?;
 
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let auto_user_selectors = [
         "input[type=email]",
@@ -5684,7 +5684,7 @@ async fn handle_swipe(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
     }
 
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
 
     let start_x = cmd.get("startX").and_then(|v| v.as_f64()).unwrap_or(200.0);
     let start_y = cmd.get("startY").and_then(|v| v.as_f64()).unwrap_or(400.0);
@@ -5869,7 +5869,7 @@ fn build_mouse_event_params(
 
 async fn handle_input_mouse(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let event_type = cmd
         .get("type")
         .and_then(|v| v.as_str())
@@ -5901,7 +5901,7 @@ async fn handle_input_mouse(cmd: &Value, state: &mut DaemonState) -> Result<Valu
 
 async fn handle_input_keyboard(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let event_type = cmd
         .get("type")
         .and_then(|v| v.as_str())
@@ -5922,7 +5922,7 @@ async fn handle_input_keyboard(cmd: &Value, state: &DaemonState) -> Result<Value
 
 async fn handle_input_touch(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let event_type = cmd
         .get("type")
         .and_then(|v| v.as_str())
@@ -5943,7 +5943,7 @@ async fn handle_input_touch(cmd: &Value, state: &DaemonState) -> Result<Value, S
 
 async fn handle_keydown(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let key = cmd
         .get("key")
         .and_then(|v| v.as_str())
@@ -5961,7 +5961,7 @@ async fn handle_keydown(cmd: &Value, state: &DaemonState) -> Result<Value, Strin
 
 async fn handle_keyup(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let key = cmd
         .get("key")
         .and_then(|v| v.as_str())
@@ -5979,7 +5979,7 @@ async fn handle_keyup(cmd: &Value, state: &DaemonState) -> Result<Value, String>
 
 async fn handle_inserttext(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let text = cmd
         .get("text")
         .and_then(|v| v.as_str())
@@ -5997,7 +5997,7 @@ async fn handle_inserttext(cmd: &Value, state: &DaemonState) -> Result<Value, St
 
 async fn handle_mousemove(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let x = cmd.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let y = cmd.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let params = build_mouse_event_params(
@@ -6021,7 +6021,7 @@ async fn handle_mousemove(cmd: &Value, state: &mut DaemonState) -> Result<Value,
 
 async fn handle_mousedown(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let button = cmd.get("button").and_then(|v| v.as_str()).unwrap_or("left");
     let params = build_mouse_event_params(
         &mut state.mouse_state,
@@ -6044,7 +6044,7 @@ async fn handle_mousedown(cmd: &Value, state: &mut DaemonState) -> Result<Value,
 
 async fn handle_mouseup(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
+    let session_id = mgr.active_session_id().map_err(|e| e.to_string())?.to_string();
     let button = cmd.get("button").and_then(|v| v.as_str()).unwrap_or("left");
     let params = build_mouse_event_params(
         &mut state.mouse_state,

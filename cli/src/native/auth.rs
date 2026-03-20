@@ -6,6 +6,8 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
+use super::errors::AuthError;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProfile {
@@ -28,16 +30,15 @@ pub struct AuthProfile {
 // Keep legacy Credential alias for backward compatibility
 pub type Credential = AuthProfile;
 
-fn validate_profile_name(name: &str) -> Result<(), String> {
+fn validate_profile_name(name: &str) -> Result<(), AuthError> {
     if name.is_empty()
         || !name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        return Err(format!(
-            "Invalid profile name '{}'. Must match /^[a-zA-Z0-9_-]+$/",
-            name
-        ));
+        return Err(AuthError::InvalidProfileName {
+            name: name.to_string(),
+        });
     }
     Ok(())
 }
@@ -82,47 +83,53 @@ fn parse_key_hex(hex_str: &str) -> Option<Vec<u8>> {
 
 /// Read the encryption key from AGENT_BROWSER_ENCRYPTION_KEY env var or
 /// ~/.agent-browser/.encryption-key file (matching the Node.js implementation).
-fn get_encryption_key() -> Result<Vec<u8>, String> {
+fn get_encryption_key() -> Result<Vec<u8>, AuthError> {
     if let Ok(key_hex) = std::env::var(ENCRYPTION_KEY_ENV) {
         return parse_key_hex(&key_hex).ok_or_else(|| {
-            format!(
+            AuthError::Encryption(format!(
                 "{} should be a 64-character hex string (256 bits). Generate one with: openssl rand -hex 32",
                 ENCRYPTION_KEY_ENV
-            )
+            ))
         });
     }
 
     let key_file = get_key_file_path();
     if key_file.exists() {
         let hex = fs::read_to_string(&key_file)
-            .map_err(|e| format!("Failed to read encryption key file: {}", e))?;
+            .map_err(|e| AuthError::Io {
+                operation: "read encryption key file".to_string(),
+                detail: e.to_string(),
+            })?;
         return parse_key_hex(&hex).ok_or_else(|| {
-            format!(
+            AuthError::Encryption(format!(
                 "Invalid encryption key in {}. Expected 64-character hex string.",
                 key_file.display()
-            )
+            ))
         });
     }
 
-    Err(format!(
+    Err(AuthError::Encryption(format!(
         "Encryption key required. Set {} or ensure {} exists.",
         ENCRYPTION_KEY_ENV,
         key_file.display()
-    ))
+    )))
 }
 
 /// Ensure an encryption key exists, auto-generating one if needed.
-fn ensure_encryption_key() -> Result<Vec<u8>, String> {
+fn ensure_encryption_key() -> Result<Vec<u8>, AuthError> {
     if let Ok(key) = get_encryption_key() {
         return Ok(key);
     }
 
     let mut key = [0u8; 32];
-    getrandom::getrandom(&mut key).map_err(|e| format!("Failed to generate key: {}", e))?;
+    getrandom::getrandom(&mut key).map_err(|e| AuthError::Encryption(format!("Failed to generate key: {}", e)))?;
     let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
     let dir = get_agent_browser_dir();
-    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create directory: {}", e))?;
+    fs::create_dir_all(&dir).map_err(|e| AuthError::Io {
+        operation: "create directory".to_string(),
+        detail: e.to_string(),
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -131,7 +138,10 @@ fn ensure_encryption_key() -> Result<Vec<u8>, String> {
 
     let key_file = get_key_file_path();
     fs::write(&key_file, format!("{}\n", key_hex))
-        .map_err(|e| format!("Failed to write encryption key: {}", e))?;
+        .map_err(|e| AuthError::Io {
+            operation: "write encryption key".to_string(),
+            detail: e.to_string(),
+        })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -149,21 +159,21 @@ fn ensure_encryption_key() -> Result<Vec<u8>, String> {
 }
 
 /// Encrypt a profile to the JSON+base64 format compatible with Node.js.
-fn encrypt_profile(profile: &AuthProfile) -> Result<String, String> {
+fn encrypt_profile(profile: &AuthProfile) -> Result<String, AuthError> {
     let key = ensure_encryption_key()?;
     let cipher =
-        Aes256Gcm::new_from_slice(&key).map_err(|e| format!("Encryption key error: {}", e))?;
+        Aes256Gcm::new_from_slice(&key).map_err(|e| AuthError::Encryption(format!("Encryption key error: {}", e)))?;
 
     let plaintext = serde_json::to_string(profile)
-        .map_err(|e| format!("Failed to serialize profile: {}", e))?;
+        .map_err(|e| AuthError::Encryption(format!("Failed to serialize profile: {}", e)))?;
 
     let mut iv = [0u8; 12];
-    getrandom::getrandom(&mut iv).map_err(|e| format!("Failed to generate IV: {}", e))?;
+    getrandom::getrandom(&mut iv).map_err(|e| AuthError::Encryption(format!("Failed to generate IV: {}", e)))?;
 
     // aes_gcm appends the 16-byte auth tag to the ciphertext
     let encrypted = cipher
         .encrypt(aes_gcm::Nonce::from_slice(&iv), plaintext.as_bytes())
-        .map_err(|e| format!("Encryption failed: {}", e))?;
+        .map_err(|e| AuthError::Encryption(format!("Encryption failed: {}", e)))?;
 
     let tag_offset = encrypted.len() - 16;
     let ciphertext = &encrypted[..tag_offset];
@@ -178,7 +188,7 @@ fn encrypt_profile(profile: &AuthProfile) -> Result<String, String> {
     });
 
     serde_json::to_string_pretty(&payload)
-        .map_err(|e| format!("Failed to serialize payload: {}", e))
+        .map_err(|e| AuthError::Encryption(format!("Failed to serialize payload: {}", e)))
 }
 
 /// JSON envelope written by Node.js encryption (src/encryption.ts).
@@ -194,9 +204,11 @@ struct EncryptedPayload {
     data: String,
 }
 
-fn decrypt_profile(data: &[u8]) -> Result<AuthProfile, String> {
+fn decrypt_profile(data: &[u8]) -> Result<AuthProfile, AuthError> {
     let text = std::str::from_utf8(data).map_err(|_| {
-        "Profile is not valid UTF-8 -- it may use an older incompatible binary format".to_string()
+        AuthError::Encryption(
+            "Profile is not valid UTF-8 -- it may use an older incompatible binary format".to_string(),
+        )
     })?;
 
     if let Ok(payload) = serde_json::from_str::<EncryptedPayload>(text) {
@@ -204,13 +216,13 @@ fn decrypt_profile(data: &[u8]) -> Result<AuthProfile, String> {
 
         let iv = STANDARD
             .decode(&payload.iv)
-            .map_err(|e| format!("Invalid base64 iv: {}", e))?;
+            .map_err(|e| AuthError::Encryption(format!("Invalid base64 iv: {}", e)))?;
         let auth_tag = STANDARD
             .decode(&payload.auth_tag)
-            .map_err(|e| format!("Invalid base64 authTag: {}", e))?;
+            .map_err(|e| AuthError::Encryption(format!("Invalid base64 authTag: {}", e)))?;
         let ciphertext = STANDARD
             .decode(&payload.data)
-            .map_err(|e| format!("Invalid base64 data: {}", e))?;
+            .map_err(|e| AuthError::Encryption(format!("Invalid base64 data: {}", e)))?;
 
         // aes_gcm expects ciphertext || auth_tag as input to decrypt
         let mut combined = Vec::with_capacity(ciphertext.len() + auth_tag.len());
@@ -218,24 +230,27 @@ fn decrypt_profile(data: &[u8]) -> Result<AuthProfile, String> {
         combined.extend_from_slice(&auth_tag);
 
         let cipher =
-            Aes256Gcm::new_from_slice(&key).map_err(|e| format!("Decryption key error: {}", e))?;
+            Aes256Gcm::new_from_slice(&key).map_err(|e| AuthError::Encryption(format!("Decryption key error: {}", e)))?;
         let plaintext = cipher
             .decrypt(aes_gcm::Nonce::from_slice(&iv), combined.as_slice())
-            .map_err(|e| format!("Decryption failed: {}", e))?;
+            .map_err(|e| AuthError::Encryption(format!("Decryption failed: {}", e)))?;
 
         let json_str = String::from_utf8(plaintext)
-            .map_err(|e| format!("Decrypted data is not valid UTF-8: {}", e))?;
-        return serde_json::from_str(&json_str).map_err(|e| format!("Invalid profile data: {}", e));
+            .map_err(|e| AuthError::Encryption(format!("Decrypted data is not valid UTF-8: {}", e)))?;
+        return serde_json::from_str(&json_str).map_err(|e| AuthError::Encryption(format!("Invalid profile data: {}", e)));
     }
 
     // Fallback: try as plain unencrypted JSON profile
     serde_json::from_str::<AuthProfile>(text)
-        .map_err(|_| "Profile is not a valid encrypted or unencrypted payload".to_string())
+        .map_err(|_| AuthError::Encryption("Profile is not a valid encrypted or unencrypted payload".to_string()))
 }
 
-fn save_profile(profile: &AuthProfile) -> Result<(), String> {
+fn save_profile(profile: &AuthProfile) -> Result<(), AuthError> {
     let dir = get_auth_dir();
-    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create auth dir: {}", e))?;
+    fs::create_dir_all(&dir).map_err(|e| AuthError::Io {
+        operation: "create auth dir".to_string(),
+        detail: e.to_string(),
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -244,7 +259,10 @@ fn save_profile(profile: &AuthProfile) -> Result<(), String> {
 
     let encrypted_json = encrypt_profile(profile)?;
     let path = get_profile_path(&profile.name);
-    fs::write(&path, &encrypted_json).map_err(|e| format!("Failed to write profile: {}", e))?;
+    fs::write(&path, &encrypted_json).map_err(|e| AuthError::Io {
+        operation: "write profile".to_string(),
+        detail: e.to_string(),
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -253,12 +271,17 @@ fn save_profile(profile: &AuthProfile) -> Result<(), String> {
     Ok(())
 }
 
-fn load_profile(name: &str) -> Result<AuthProfile, String> {
+fn load_profile(name: &str) -> Result<AuthProfile, AuthError> {
     let path = get_profile_path(name);
     if !path.exists() {
-        return Err(format!("Auth profile '{}' not found", name));
+        return Err(AuthError::ProfileNotFound {
+            name: name.to_string(),
+        });
     }
-    let data = fs::read(&path).map_err(|e| format!("Failed to read profile: {}", e))?;
+    let data = fs::read(&path).map_err(|e| AuthError::Io {
+        operation: "read profile".to_string(),
+        detail: e.to_string(),
+    })?;
     decrypt_profile(&data)
 }
 
@@ -267,7 +290,7 @@ pub fn credentials_set(
     username: &str,
     password: &str,
     url: Option<&str>,
-) -> Result<Value, String> {
+) -> Result<Value, AuthError> {
     validate_profile_name(name)?;
     let profile = AuthProfile {
         name: name.to_string(),
@@ -292,7 +315,7 @@ pub fn auth_save(
     username_selector: Option<&str>,
     password_selector: Option<&str>,
     submit_selector: Option<&str>,
-) -> Result<Value, String> {
+) -> Result<Value, AuthError> {
     validate_profile_name(name)?;
     let profile = AuthProfile {
         name: name.to_string(),
@@ -309,7 +332,7 @@ pub fn auth_save(
     Ok(json!({ "saved": name }))
 }
 
-pub fn credentials_get(name: &str) -> Result<Value, String> {
+pub fn credentials_get(name: &str) -> Result<Value, AuthError> {
     let profile = load_profile(name)?;
     Ok(json!({
         "name": profile.name,
@@ -319,21 +342,26 @@ pub fn credentials_get(name: &str) -> Result<Value, String> {
     }))
 }
 
-pub fn credentials_get_full(name: &str) -> Result<AuthProfile, String> {
+pub fn credentials_get_full(name: &str) -> Result<AuthProfile, AuthError> {
     load_profile(name)
 }
 
-pub fn credentials_delete(name: &str) -> Result<Value, String> {
+pub fn credentials_delete(name: &str) -> Result<Value, AuthError> {
     validate_profile_name(name)?;
     let path = get_profile_path(name);
     if !path.exists() {
-        return Err(format!("Auth profile '{}' not found", name));
+        return Err(AuthError::ProfileNotFound {
+            name: name.to_string(),
+        });
     }
-    fs::remove_file(&path).map_err(|e| format!("Failed to delete profile: {}", e))?;
+    fs::remove_file(&path).map_err(|e| AuthError::Io {
+        operation: "delete profile".to_string(),
+        detail: e.to_string(),
+    })?;
     Ok(json!({ "deleted": name }))
 }
 
-pub fn credentials_list() -> Result<Value, String> {
+pub fn credentials_list() -> Result<Value, AuthError> {
     let dir = get_auth_dir();
     if !dir.exists() {
         return Ok(json!({ "profiles": [] }));
@@ -371,7 +399,7 @@ pub fn credentials_list() -> Result<Value, String> {
     Ok(json!({ "profiles": profiles }))
 }
 
-pub fn auth_show(name: &str) -> Result<Value, String> {
+pub fn auth_show(name: &str) -> Result<Value, AuthError> {
     validate_profile_name(name)?;
     let profile = load_profile(name)?;
     Ok(json!({
