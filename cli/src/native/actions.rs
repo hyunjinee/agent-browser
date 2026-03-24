@@ -155,6 +155,28 @@ struct DrainedEvents {
     detached_iframe_sessions: Vec<String>,
 }
 
+/// Compute a hash of the [`LaunchOptions`] fields that require a browser
+/// relaunch when changed (baked into the Chrome process at startup).
+///
+/// Fields NOT hashed (adjustable at runtime via CDP without relaunch):
+/// ignore_https_errors, color_scheme, download_path, storage_state
+fn launch_hash(opts: &LaunchOptions) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut h = DefaultHasher::new();
+    opts.headless.hash(&mut h);
+    opts.extensions.hash(&mut h);
+    opts.profile.hash(&mut h);
+    opts.executable_path.hash(&mut h);
+    opts.args.hash(&mut h);
+    opts.proxy.hash(&mut h);
+    opts.proxy_bypass.hash(&mut h);
+    opts.user_agent.hash(&mut h);
+    opts.allow_file_access.hash(&mut h);
+    h.finish()
+}
+
 pub struct DaemonState {
     pub browser: Option<BrowserManager>,
     pub appium: Option<AppiumManager>,
@@ -196,6 +218,8 @@ pub struct DaemonState {
     pub stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>>,
     /// Stream server instance kept alive so the broadcast channel remains open.
     pub stream_server: Option<Arc<StreamServer>>,
+    /// Hash of launch options used for the current browser, for relaunch detection.
+    launch_hash: Option<u64>,
 }
 
 impl DaemonState {
@@ -236,6 +260,7 @@ impl DaemonState {
             mouse_state: MouseState::default(),
             stream_client: None,
             stream_server: None,
+            launch_hash: None,
         }
     }
 
@@ -1162,9 +1187,11 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
         return Ok(());
     }
 
+    let hash = launch_hash(&options);
     let mgr = BrowserManager::launch(options, engine.as_deref()).await?;
     state.reset_input_state();
     state.browser = Some(mgr);
+    state.launch_hash = Some(hash);
     state.subscribe_to_browser_events();
     state.start_fetch_handler();
     state.update_stream_client().await;
@@ -1242,11 +1269,79 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Relaunch logic: check if we can reuse the existing connection
+    let extensions: Option<Vec<String>> =
+        cmd.get("extensions").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+    let storage_state = cmd.get("storageState").and_then(|v| v.as_str());
+
+    let launch_options = LaunchOptions {
+        headless,
+        executable_path: cmd
+            .get("executablePath")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok()),
+        proxy: cmd.get("proxy").and_then(|v| {
+            v.as_str().map(|s| s.to_string()).or_else(|| {
+                v.get("server")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string())
+            })
+        }),
+        proxy_bypass: cmd
+            .get("proxy")
+            .and_then(|v| v.get("bypass"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        profile: cmd
+            .get("profile")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        allow_file_access: cmd
+            .get("allowFileAccess")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        args: cmd
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        extensions,
+        storage_state: storage_state.map(String::from),
+        user_agent: cmd
+            .get("userAgent")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        ignore_https_errors: cmd
+            .get("ignoreHTTPSErrors")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        color_scheme: cmd
+            .get("colorScheme")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        download_path: cmd
+            .get("downloadPath")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    };
+
+    let new_hash = launch_hash(&launch_options);
+
+    // Hash comparison is checked before the async is_connection_alive so
+    // the expensive liveness probe is skipped when a relaunch is already certain.
     let needs_relaunch = if let Some(ref mgr) = state.browser {
         let is_external = cdp_url.is_some() || cdp_port.is_some() || auto_connect;
         let was_external = mgr.is_cdp_connection();
-        is_external != was_external || !mgr.is_connection_alive().await
+        let hash_changed = state.launch_hash != Some(new_hash);
+        is_external != was_external || hash_changed || !mgr.is_connection_alive().await
     } else {
         true
     };
@@ -1255,6 +1350,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         if let Some(ref mut b) = state.browser {
             b.close().await?;
             state.browser = None;
+            state.launch_hash = None;
             state.reset_input_state();
             state.update_stream_client().await;
         }
@@ -1262,33 +1358,15 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         return Ok(json!({ "launched": true, "reused": true }));
     }
     state.ref_map.clear();
-    let extensions: Option<Vec<String>> =
-        cmd.get("extensions").and_then(|v| v.as_array()).map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        });
-
-    let profile = cmd.get("profile").and_then(|v| v.as_str());
-    let storage_state = cmd.get("storageState").and_then(|v| v.as_str());
-    let allow_file_access = cmd
-        .get("allowFileAccess")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let executable_path: Option<String> = cmd
-        .get("executablePath")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .or_else(|| std::env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok());
 
     let has_cdp = cdp_url.is_some() || cdp_port.is_some();
     super::browser::validate_launch_options(
-        extensions.as_deref(),
+        launch_options.extensions.as_deref(),
         has_cdp,
-        profile,
+        launch_options.profile.as_deref(),
         storage_state,
-        allow_file_access,
-        executable_path.as_deref(),
+        launch_options.allow_file_access,
+        launch_options.executable_path.as_deref(),
     )?;
 
     if let Some(url) = cdp_url {
@@ -1354,62 +1432,6 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         .map(String::from)
         .or_else(|| env::var("AGENT_BROWSER_ENGINE").ok());
 
-    let options = LaunchOptions {
-        headless,
-        executable_path: cmd
-            .get("executablePath")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok()),
-        proxy: cmd.get("proxy").and_then(|v| {
-            v.as_str().map(|s| s.to_string()).or_else(|| {
-                v.get("server")
-                    .and_then(|s| s.as_str())
-                    .map(|s| s.to_string())
-            })
-        }),
-        profile: cmd
-            .get("profile")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        allow_file_access: cmd
-            .get("allowFileAccess")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        args: cmd
-            .get("args")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        extensions,
-        storage_state: storage_state.map(String::from),
-        proxy_bypass: cmd
-            .get("proxy")
-            .and_then(|v| v.get("bypass"))
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        user_agent: cmd
-            .get("userAgent")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        ignore_https_errors: cmd
-            .get("ignoreHTTPSErrors")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        color_scheme: cmd
-            .get("colorScheme")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        download_path: cmd
-            .get("downloadPath")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-    };
-
     if let Some(ref domains) = cmd
         .get("allowedDomains")
         .and_then(|v| v.as_str())
@@ -1420,7 +1442,8 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
     }
 
     state.reset_input_state();
-    state.browser = Some(BrowserManager::launch(options, engine.as_deref()).await?);
+    state.browser = Some(BrowserManager::launch(launch_options, engine.as_deref()).await?);
+    state.launch_hash = Some(new_hash);
     state.subscribe_to_browser_events();
     state.start_fetch_handler();
     state.update_stream_client().await;
@@ -7386,4 +7409,5 @@ mod tests {
         assert_eq!(key, "+");
         assert_eq!(mods, None);
     }
+
 }
