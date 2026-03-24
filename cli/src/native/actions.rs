@@ -7409,5 +7409,4 @@ mod tests {
         assert_eq!(key, "+");
         assert_eq!(mods, None);
     }
-
 }
