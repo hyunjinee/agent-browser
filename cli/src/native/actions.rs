@@ -1340,7 +1340,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
     let needs_relaunch = if let Some(ref mgr) = state.browser {
         let is_external = cdp_url.is_some() || cdp_port.is_some() || auto_connect;
         let was_external = mgr.is_cdp_connection();
-        let hash_changed = state.launch_hash != Some(new_hash);
+        let hash_changed = !is_external && state.launch_hash != Some(new_hash);
         is_external != was_external || hash_changed || !mgr.is_connection_alive().await
     } else {
         true
