@@ -122,6 +122,7 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
         } else {
             println!("{}", serde_json::to_string(resp).unwrap_or_default());
         }
+        // JSON mode includes the warning field in the JSON payload already
         return;
     }
 
@@ -131,10 +132,42 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
             color::error_indicator(),
             resp.error.as_deref().unwrap_or("Unknown error")
         );
+        // Still print dialog warning after errors, since a pending dialog
+        // is the most common cause of commands timing out
+        if let Some(ref warning) = resp.warning {
+            eprintln!("{} {}", color::warning_indicator(), warning);
+        }
         return;
     }
 
     if let Some(data) = &resp.data {
+        // Dialog status response
+        if action == Some("dialog") {
+            if let Some(has_dialog) = data.get("hasDialog").and_then(|v| v.as_bool()) {
+                if has_dialog {
+                    let dtype = data
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                    println!(
+                        "{} JavaScript {} dialog is open: \"{}\"",
+                        color::warning_indicator(),
+                        dtype,
+                        message
+                    );
+                    if let Some(default_prompt) = data.get("defaultPrompt").and_then(|v| v.as_str())
+                    {
+                        println!("  Default prompt text: \"{}\"", default_prompt);
+                    }
+                    println!("  Use `dialog accept [text]` or `dialog dismiss` to resolve it");
+                } else {
+                    println!("{} No dialog is currently open", color::success_indicator());
+                }
+                print_warning(resp);
+                return;
+            }
+        }
         if action == Some("storage_get") {
             if let Some(output) = format_storage_text(data) {
                 println!("{}", output);
@@ -887,6 +920,14 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
 
         // Default success
         println!("{} Done", color::success_indicator());
+    }
+
+    print_warning(resp);
+}
+
+fn print_warning(resp: &Response) {
+    if let Some(ref warning) = resp.warning {
+        eprintln!("{} {}", color::warning_indicator(), warning);
     }
 }
 
@@ -1995,13 +2036,14 @@ Examples:
             r##"
 agent-browser dialog - Handle browser dialogs
 
-Usage: agent-browser dialog <response> [text]
+Usage: agent-browser dialog <accept|dismiss|status> [text]
 
-Respond to browser dialogs (alert, confirm, prompt).
+Respond to or check for browser dialogs (alert, confirm, prompt).
 
 Operations:
   accept [text]        Accept dialog, optionally with prompt text
   dismiss              Dismiss/cancel dialog
+  status               Check if a dialog is currently open
 
 Global Options:
   --json               Output as JSON
@@ -2011,6 +2053,7 @@ Examples:
   agent-browser dialog accept
   agent-browser dialog accept "my input"
   agent-browser dialog dismiss
+  agent-browser dialog status
 "##
         }
 
@@ -2641,9 +2684,9 @@ Options:
   --args <args>              Browser launch args, comma or newline separated (or AGENT_BROWSER_ARGS)
                              e.g., --args "--no-sandbox,--disable-blink-features=AutomationControlled"
   --user-agent <ua>          Custom User-Agent (or AGENT_BROWSER_USER_AGENT)
-  --proxy <server>           Proxy server URL (or AGENT_BROWSER_PROXY)
-                             e.g., --proxy "http://user:pass@127.0.0.1:7890"
-  --proxy-bypass <hosts>     Bypass proxy for these hosts (or AGENT_BROWSER_PROXY_BYPASS)
+  --proxy <server>           Proxy server URL (or AGENT_BROWSER_PROXY, HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)
+                             Supports authenticated proxies: --proxy "http://user:pass@127.0.0.1:7890"
+  --proxy-bypass <hosts>     Bypass proxy for these hosts (or AGENT_BROWSER_PROXY_BYPASS, NO_PROXY)
                              e.g., --proxy-bypass "localhost,*.internal.com"
   --ignore-https-errors      Ignore HTTPS certificate errors
   --allow-file-access        Allow file:// URLs to access local files (Chromium only)
@@ -2721,6 +2764,9 @@ Environment:
   AGENT_BROWSER_CONFIRM_ACTIONS  Action categories requiring confirmation
   AGENT_BROWSER_CONFIRM_INTERACTIVE Enable interactive confirmation prompts
   AGENT_BROWSER_ENGINE           Browser engine: chrome (default), lightpanda
+  HTTP_PROXY / HTTPS_PROXY       Standard proxy env vars (fallback if AGENT_BROWSER_PROXY not set)
+  ALL_PROXY                      SOCKS proxy (fallback for proxy)
+  NO_PROXY                       Bypass proxy for hosts (fallback for proxy-bypass)
   AGENT_BROWSER_SCREENSHOT_DIR   Default screenshot output directory
   AGENT_BROWSER_SCREENSHOT_QUALITY JPEG quality 0-100
   AGENT_BROWSER_SCREENSHOT_FORMAT Screenshot format: png, jpeg

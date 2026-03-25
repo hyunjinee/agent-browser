@@ -1,5 +1,35 @@
 # agent-browser
 
+## 0.22.2
+
+### Patch Changes
+
+- a098197: ### New Features
+
+  - **Dialog status command** - Added `dialog status` command to check whether a JavaScript dialog is currently open (#999)
+  - **Dialog warning field** - Command responses now include a `warning` field when a JavaScript dialog is pending, indicating the dialog type and message (#999)
+
+  ### Improvements
+
+  - **Standard proxy environment variables** - The proxy setting now automatically falls back to standard environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their lowercase variants), with `NO_PROXY`/`no_proxy` respected for bypass rules (#1000)
+  - **Font packages for `--with-deps`** - Installing with `--with-deps` now includes CJK and emoji font packages on Linux (Debian, RPM, and yum-based distros) to prevent missing glyphs when rendering international content (#1002)
+
+  ### Bug Fixes
+
+  - Fixed `state show` always failing with "Missing 'path' parameter" due to a mismatched JSON field name (`filename` → `path`) (#994)
+  - Fixed `console` command returning only `Done` due to a JSON field name mismatch in the response (#986)
+  - Fixed browser-domain CDP events being dropped during downloads due to a `sessionId` mismatch (#998)
+  - Fixed proxy authentication by handling credentials via the CDP `Fetch.authRequired` event rather than passing them inline (#1000)
+
+## 0.22.1
+
+### Patch Changes
+
+- 3a3317b: ### Bug Fixes
+
+  - Fixed **modifier key chords** (e.g. `Control+a`, `Shift+Enter`, `Control+Shift+a`) not being handled correctly when using `press`. Modifier keys (`Alt`, `Control`/`Ctrl`, `Meta`/`Cmd`, `Shift`) are now parsed and forwarded as CDP modifier bitmasks rather than treated as part of the key name (#980)
+  - Fixed **query parameters being dropped** from `--cdp` HTTP URLs (e.g. `http://host:9222?mode=Hello`). Query strings are now preserved and forwarded to the remote CDP endpoint (#982)
+
 ## 0.22.0
 
 ### Minor Changes
