@@ -89,10 +89,19 @@ impl StreamServer {
         *self.screencasting.lock().await
     }
 
-    /// Update the stored viewport dimensions used by status messages and screencast.
+    /// Update the stored viewport dimensions and restart the active screencast (if any)
+    /// so frames are captured at the new size.
     pub async fn set_viewport(&self, width: u32, height: u32) {
-        *self.viewport_width.lock().await = width;
-        *self.viewport_height.lock().await = height;
+        let mut vw = self.viewport_width.lock().await;
+        let mut vh = self.viewport_height.lock().await;
+        if *vw == width && *vh == height {
+            return;
+        }
+        *vw = width;
+        *vh = height;
+        drop(vw);
+        drop(vh);
+        self.client_notify.notify_one();
     }
 
     /// Get the current viewport dimensions.
@@ -569,7 +578,7 @@ async fn cdp_event_loop(
                                 Err(broadcast::error::RecvError::Closed) => break,
                             }
                         }
-                        // Also check for notify (client count change or CDP client change)
+                        // Also check for notify (client count change, CDP client change, or viewport change)
                         _ = client_notify.notified() => {
                             let count = *client_count.lock().await;
                             let session_id = cdp_session_id.read().await.clone();
@@ -598,6 +607,18 @@ async fn cdp_event_loop(
                                 let mut sc = screencasting.lock().await;
                                 *sc = false;
                                 // Re-notify so we pick up the new client in the outer loop
+                                client_notify.notify_one();
+                                break;
+                            }
+                            // Viewport changed — restart screencast with new dimensions
+                            let new_vw = *viewport_width.lock().await;
+                            let new_vh = *viewport_height.lock().await;
+                            if new_vw != vw || new_vh != vh {
+                                let _ = client_arc
+                                    .send_command_no_params("Page.stopScreencast", session_id.as_deref())
+                                    .await;
+                                let mut sc = screencasting.lock().await;
+                                *sc = false;
                                 client_notify.notify_one();
                                 break;
                             }

@@ -3521,7 +3521,7 @@ async fn e2e_stream_frame_metadata_respects_custom_viewport() {
     .await;
     assert_success(&resp);
 
-    // Wait for a frame message and verify its metadata
+    // Wait for a frame message and verify both metadata and actual image dimensions
     let mut found_frame = false;
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(15);
     while tokio::time::Instant::now() < deadline {
@@ -3547,6 +3547,31 @@ async fn e2e_stream_frame_metadata_respects_custom_viewport() {
                 "frame metadata deviceHeight should match custom viewport, got: {}",
                 meta
             );
+
+            // Verify the actual JPEG image dimensions match the custom viewport.
+            let data_str = parsed
+                .get("data")
+                .and_then(|v| v.as_str())
+                .expect("frame message should include base64-encoded 'data' field");
+            {
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(data_str)
+                    .expect("frame data should be valid base64");
+                let (img_w, img_h) = jpeg_dimensions(&bytes)
+                    .expect("frame data should be a valid JPEG with SOF marker");
+                assert_eq!(
+                    img_w, 800,
+                    "JPEG image width should match custom viewport, got: {}",
+                    img_w
+                );
+                assert_eq!(
+                    img_h, 600,
+                    "JPEG image height should match custom viewport, got: {}",
+                    img_h
+                );
+            }
+
             found_frame = true;
             break;
         }
@@ -3567,4 +3592,16 @@ async fn e2e_stream_frame_metadata_respects_custom_viewport() {
     let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
     assert_success(&resp);
     let _ = std::fs::remove_dir_all(&socket_dir);
+}
+
+/// Extract width and height from a JPEG's SOF0 (0xFFC0) or SOF2 (0xFFC2) marker.
+fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    for i in 0..data.len().saturating_sub(8) {
+        if data[i] == 0xFF && (data[i + 1] == 0xC0 || data[i + 1] == 0xC2) {
+            let height = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
+            let width = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
+            return Some((width, height));
+        }
+    }
+    None
 }
