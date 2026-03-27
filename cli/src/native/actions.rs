@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -556,7 +556,7 @@ impl DaemonState {
 
         let mut pending_acks: Vec<i64> = Vec::new();
         let mut new_targets: Vec<TargetCreatedEvent> = Vec::new();
-        let mut new_target_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut new_target_ids: HashSet<String> = HashSet::new();
         let mut changed_targets: Vec<TargetInfoChangedEvent> = Vec::new();
         let mut destroyed_targets: Vec<String> = Vec::new();
         let mut attached_iframe_sessions: Vec<(String, String)> = Vec::new();
@@ -978,8 +978,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
     }
 
     // Drain and apply pending CDP events (console, errors, screencast frames, target lifecycle)
-    let drained = state.drain_cdp_events();
-    state.apply_drained_events(drained).await;
+    state.drain_cdp_events_background().await;
 
     // Hot-reload and check action policy
     if let Some(ref mut policy) = state.policy {
