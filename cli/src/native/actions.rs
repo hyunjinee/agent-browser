@@ -465,9 +465,8 @@ impl DaemonState {
             if let Some(ref browser) = self.browser {
                 if let Ok(session_id) = browser.active_session_id() {
                     for ack_sid in drained.pending_acks {
-                        let _ =
-                            stream::ack_screencast_frame(&browser.client, session_id, ack_sid)
-                                .await;
+                        let _ = stream::ack_screencast_frame(&browser.client, session_id, ack_sid)
+                            .await;
                     }
                 }
             }
@@ -597,7 +596,9 @@ impl DaemonState {
                                         .browser
                                         .as_ref()
                                         .is_some_and(|b| b.has_target(&te.target_info.target_id));
-                                    if already_tracked || new_target_ids.contains(&te.target_info.target_id) {
+                                    if already_tracked
+                                        || new_target_ids.contains(&te.target_info.target_id)
+                                    {
                                         changed_targets.push(te);
                                     } else {
                                         new_target_ids.insert(te.target_info.target_id.clone());
