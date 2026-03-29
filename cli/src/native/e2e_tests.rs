@@ -3599,3 +3599,111 @@ async fn e2e_headers_case_insensitive_no_duplicates() {
     let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
     assert_success(&resp);
 }
+
+#[tokio::test]
+#[ignore]
+async fn e2e_offscreen_scroll_before_click_and_hover() {
+    let mut state = DaemonState::new();
+
+    let resp = execute_command(
+        &json!({ "id": "1", "action": "launch", "headless": true }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({
+            "id": "2",
+            "action": "setcontent",
+            "html": r##"
+                <html><body>
+                  <div style="height: 5000px;">spacer</div>
+                  <button id="click-btn" onclick="document.title='clicked'">Click Target</button>
+                  <button id="hover-btn" onmouseover="this.dataset.hovered='true'">Hover Target</button>
+                  <a href="#" onclick="event.preventDefault(); document.title='ref-clicked'">Ref Link</a>
+                </body></html>
+            "##,
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({ "id": "3", "action": "click", "selector": "#click-btn" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({ "id": "4", "action": "evaluate", "script": "document.title" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(
+        get_data(&resp)["result"],
+        "clicked",
+        "Click handler should have fired on the off-screen button"
+    );
+
+    let resp = execute_command(
+        &json!({ "id": "5", "action": "hover", "selector": "#hover-btn" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({
+            "id": "6", "action": "evaluate",
+            "script": "document.getElementById('hover-btn').dataset.hovered"
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(
+        get_data(&resp)["result"],
+        "true",
+        "Hover handler should have fired on the off-screen button"
+    );
+
+    let resp = execute_command(&json!({ "id": "7", "action": "snapshot" }), &mut state).await;
+    assert_success(&resp);
+    let snapshot = get_data(&resp)["snapshot"].as_str().unwrap();
+
+    let ref_id = snapshot
+        .lines()
+        .find(|line| line.contains("Ref Link"))
+        .and_then(|line| {
+            line.split("ref=")
+                .nth(1)
+                .and_then(|s| s.split(|c: char| !c.is_alphanumeric()).next())
+        })
+        .expect("Should find ref for Ref Link");
+
+    let resp = execute_command(
+        &json!({ "id": "8", "action": "click", "selector": ref_id }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({ "id": "9", "action": "evaluate", "script": "document.title" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(
+        get_data(&resp)["result"],
+        "ref-clicked",
+        "Click via ref should have fired on the off-screen element"
+    );
+
+    let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
+    assert_success(&resp);
+}
