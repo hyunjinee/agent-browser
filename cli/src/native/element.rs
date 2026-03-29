@@ -158,8 +158,7 @@ pub async fn resolve_element_center(
     )
     .await?;
 
-    let (x, y, _, _) =
-        get_center_and_viewport(client, &effective_session_id, &object_id).await?;
+    let (x, y, _, _) = get_center_and_viewport(client, &effective_session_id, &object_id).await?;
     Ok((x, y, effective_session_id))
 }
 

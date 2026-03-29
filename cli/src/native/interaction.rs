@@ -17,12 +17,16 @@ pub async fn click(
     click_count: i32,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session_id) =
-        resolve_element_object_id(client, session_id, ref_map, selector_or_ref, iframe_sessions)
-            .await?;
+    let (object_id, effective_session_id) = resolve_element_object_id(
+        client,
+        session_id,
+        ref_map,
+        selector_or_ref,
+        iframe_sessions,
+    )
+    .await?;
     scroll_into_view_if_needed(client, &effective_session_id, &object_id).await?;
-    let (x, y, vw, vh) =
-        get_center_and_viewport(client, &effective_session_id, &object_id).await?;
+    let (x, y, vw, vh) = get_center_and_viewport(client, &effective_session_id, &object_id).await?;
     assert_in_viewport(x, y, vw, vh)?;
     dispatch_click(client, &effective_session_id, x, y, button, click_count).await
 }
@@ -53,12 +57,16 @@ pub async fn hover(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session_id) =
-        resolve_element_object_id(client, session_id, ref_map, selector_or_ref, iframe_sessions)
-            .await?;
+    let (object_id, effective_session_id) = resolve_element_object_id(
+        client,
+        session_id,
+        ref_map,
+        selector_or_ref,
+        iframe_sessions,
+    )
+    .await?;
     scroll_into_view_if_needed(client, &effective_session_id, &object_id).await?;
-    let (x, y, vw, vh) =
-        get_center_and_viewport(client, &effective_session_id, &object_id).await?;
+    let (x, y, vw, vh) = get_center_and_viewport(client, &effective_session_id, &object_id).await?;
     assert_in_viewport(x, y, vw, vh)?;
     client
         .send_command_typed::<_, Value>(
