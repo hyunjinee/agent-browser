@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use super::cdp::client::CdpClient;
 use super::cdp::types::*;
 use super::element::{
-    get_center_and_viewport, resolve_element_center, resolve_element_object_id, RefMap,
+    get_center_and_viewport, resolve_element_center, resolve_element_object_id,
+    resolve_element_object_id_fresh, CenterResult, RefMap,
 };
 
 pub async fn click(
@@ -17,7 +18,7 @@ pub async fn click(
     click_count: i32,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session_id) = resolve_element_object_id(
+    let (x, y, effective_session_id) = resolve_scroll_and_center(
         client,
         session_id,
         ref_map,
@@ -25,9 +26,6 @@ pub async fn click(
         iframe_sessions,
     )
     .await?;
-    scroll_into_view_if_needed(client, &effective_session_id, &object_id).await?;
-    let (x, y, vw, vh) = get_center_and_viewport(client, &effective_session_id, &object_id).await?;
-    assert_in_viewport(x, y, vw, vh)?;
     dispatch_click(client, &effective_session_id, x, y, button, click_count).await
 }
 
@@ -57,7 +55,7 @@ pub async fn hover(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (object_id, effective_session_id) = resolve_element_object_id(
+    let (x, y, effective_session_id) = resolve_scroll_and_center(
         client,
         session_id,
         ref_map,
@@ -65,9 +63,6 @@ pub async fn hover(
         iframe_sessions,
     )
     .await?;
-    scroll_into_view_if_needed(client, &effective_session_id, &object_id).await?;
-    let (x, y, vw, vh) = get_center_and_viewport(client, &effective_session_id, &object_id).await?;
-    assert_in_viewport(x, y, vw, vh)?;
     client
         .send_command_typed::<_, Value>(
             "Input.dispatchMouseEvent",
@@ -727,6 +722,50 @@ pub async fn select_all(
         .await?;
 
     Ok(())
+}
+
+/// Resolve an element, scroll it into view, and return its center coordinates.
+/// If the cached node turns out to be detached, retries with a fresh lookup.
+async fn resolve_scroll_and_center(
+    client: &CdpClient,
+    session_id: &str,
+    ref_map: &RefMap,
+    selector_or_ref: &str,
+    iframe_sessions: &HashMap<String, String>,
+) -> Result<(f64, f64, String), String> {
+    let (object_id, effective_session_id) = resolve_element_object_id(
+        client,
+        session_id,
+        ref_map,
+        selector_or_ref,
+        iframe_sessions,
+    )
+    .await?;
+    scroll_into_view_if_needed(client, &effective_session_id, &object_id).await?;
+    match get_center_and_viewport(client, &effective_session_id, &object_id).await? {
+        CenterResult::Found { x, y, vw, vh } => {
+            assert_in_viewport(x, y, vw, vh)?;
+            Ok((x, y, effective_session_id))
+        }
+        CenterResult::Detached => {
+            let (object_id, effective_session_id) = resolve_element_object_id_fresh(
+                client,
+                session_id,
+                ref_map,
+                selector_or_ref,
+                iframe_sessions,
+            )
+            .await?;
+            scroll_into_view_if_needed(client, &effective_session_id, &object_id).await?;
+            match get_center_and_viewport(client, &effective_session_id, &object_id).await? {
+                CenterResult::Found { x, y, vw, vh } => {
+                    assert_in_viewport(x, y, vw, vh)?;
+                    Ok((x, y, effective_session_id))
+                }
+                CenterResult::Detached => Err("Element is detached from the DOM".to_string()),
+            }
+        }
+    }
 }
 
 /// Scroll an element into view only if it is not already visible.

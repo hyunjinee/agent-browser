@@ -5,6 +5,11 @@ use serde_json::Value;
 use super::cdp::client::CdpClient;
 use super::cdp::types::*;
 
+pub(super) enum CenterResult {
+    Found { x: f64, y: f64, vw: f64, vh: f64 },
+    Detached,
+}
+
 #[derive(Debug, Clone)]
 pub struct RefEntry {
     pub backend_node_id: Option<i64>,
@@ -158,21 +163,39 @@ pub async fn resolve_element_center(
     )
     .await?;
 
-    let (x, y, _, _) = get_center_and_viewport(client, &effective_session_id, &object_id).await?;
-    Ok((x, y, effective_session_id))
+    match get_center_and_viewport(client, &effective_session_id, &object_id).await? {
+        CenterResult::Found { x, y, .. } => Ok((x, y, effective_session_id)),
+        CenterResult::Detached => {
+            let (object_id, effective_session_id) = resolve_element_object_id_fresh(
+                client,
+                session_id,
+                ref_map,
+                selector_or_ref,
+                iframe_sessions,
+            )
+            .await?;
+            match get_center_and_viewport(client, &effective_session_id, &object_id).await? {
+                CenterResult::Found { x, y, .. } => Ok((x, y, effective_session_id)),
+                CenterResult::Detached => Err("Element is detached from the DOM".to_string()),
+            }
+        }
+    }
 }
 
-/// Returns (x, y, viewport_width, viewport_height) using getBoundingClientRect.
-pub async fn get_center_and_viewport(
+/// Returns element center and viewport dimensions, or `Detached` if the
+/// element is no longer in the DOM. Checked inside the same JS call as
+/// `getBoundingClientRect` so there is no extra round-trip.
+pub(super) async fn get_center_and_viewport(
     client: &CdpClient,
     session_id: &str,
     object_id: &str,
-) -> Result<(f64, f64, f64, f64), String> {
+) -> Result<CenterResult, String> {
     let result: EvaluateResult = client
         .send_command_typed(
             "Runtime.callFunctionOn",
             &CallFunctionOnParams {
                 function_declaration: r#"function() {
+                    if (!this.isConnected) return null;
                     const r = this.getBoundingClientRect();
                     return {
                         x: r.left + r.width / 2,
@@ -192,6 +215,9 @@ pub async fn get_center_and_viewport(
         .await?;
 
     let val = result.result.value.unwrap_or(Value::Null);
+    if val.is_null() {
+        return Ok(CenterResult::Detached);
+    }
     let x = val
         .get("x")
         .and_then(|v| v.as_f64())
@@ -209,7 +235,7 @@ pub async fn get_center_and_viewport(
         .and_then(|v| v.as_f64())
         .ok_or("Failed to read viewport height")?;
 
-    Ok((x, y, vw, vh))
+    Ok(CenterResult::Found { x, y, vw, vh })
 }
 
 pub async fn resolve_element_object_id(
@@ -219,6 +245,44 @@ pub async fn resolve_element_object_id(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(String, String), String> {
+    resolve_element_object_id_impl(
+        client,
+        session_id,
+        ref_map,
+        selector_or_ref,
+        iframe_sessions,
+        true,
+    )
+    .await
+}
+
+/// Skips the cached backend_node_id and forces a fresh accessibility tree lookup.
+pub(super) async fn resolve_element_object_id_fresh(
+    client: &CdpClient,
+    session_id: &str,
+    ref_map: &RefMap,
+    selector_or_ref: &str,
+    iframe_sessions: &HashMap<String, String>,
+) -> Result<(String, String), String> {
+    resolve_element_object_id_impl(
+        client,
+        session_id,
+        ref_map,
+        selector_or_ref,
+        iframe_sessions,
+        false,
+    )
+    .await
+}
+
+async fn resolve_element_object_id_impl(
+    client: &CdpClient,
+    session_id: &str,
+    ref_map: &RefMap,
+    selector_or_ref: &str,
+    iframe_sessions: &HashMap<String, String>,
+    use_cache: bool,
+) -> Result<(String, String), String> {
     if let Some(ref_id) = parse_ref(selector_or_ref) {
         let entry = ref_map
             .get(&ref_id)
@@ -227,29 +291,28 @@ pub async fn resolve_element_object_id(
         let effective_session_id =
             resolve_frame_session(entry.frame_id.as_deref(), session_id, iframe_sessions);
 
-        // Try cached backend_node_id first (fast path)
-        if let Some(backend_node_id) = entry.backend_node_id {
-            let result: Result<DomResolveNodeResult, String> = client
-                .send_command_typed(
-                    "DOM.resolveNode",
-                    &DomResolveNodeParams {
-                        backend_node_id: Some(backend_node_id),
-                        node_id: None,
-                        object_group: Some("agent-browser".to_string()),
-                    },
-                    Some(effective_session_id),
-                )
-                .await;
+        if use_cache {
+            if let Some(backend_node_id) = entry.backend_node_id {
+                let result: Result<DomResolveNodeResult, String> = client
+                    .send_command_typed(
+                        "DOM.resolveNode",
+                        &DomResolveNodeParams {
+                            backend_node_id: Some(backend_node_id),
+                            node_id: None,
+                            object_group: Some("agent-browser".to_string()),
+                        },
+                        Some(effective_session_id),
+                    )
+                    .await;
 
-            if let Ok(r) = result {
-                if let Some(object_id) = r.object.object_id {
-                    return Ok((object_id, effective_session_id.to_string()));
+                if let Ok(r) = result {
+                    if let Some(object_id) = r.object.object_id {
+                        return Ok((object_id, effective_session_id.to_string()));
+                    }
                 }
             }
-            // backend_node_id is stale; re-query the accessibility tree below
         }
 
-        // Fallback: re-query the accessibility tree to find a fresh node by role/name
         let fresh_id = find_node_id_by_role_name(
             client,
             session_id,
