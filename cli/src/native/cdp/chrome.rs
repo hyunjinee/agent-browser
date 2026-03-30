@@ -89,6 +89,9 @@ pub struct LaunchOptions {
     pub ignore_https_errors: bool,
     pub color_scheme: Option<String>,
     pub download_path: Option<String>,
+    /// Initial viewport dimensions used for `--window-size` so the content
+    /// area matches the desired viewport from the start.
+    pub viewport_size: Option<(u32, u32)>,
 }
 
 impl Default for LaunchOptions {
@@ -109,6 +112,7 @@ impl Default for LaunchOptions {
             ignore_https_errors: false,
             color_scheme: None,
             download_path: None,
+            viewport_size: None,
         }
     }
 }
@@ -196,7 +200,8 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
         .any(|a| a.starts_with("--start-maximized") || a.starts_with("--window-size="));
 
     if !has_window_size && options.headless && !has_extensions {
-        args.push("--window-size=1280,720".to_string());
+        let (w, h) = options.viewport_size.unwrap_or((1280, 720));
+        args.push(format!("--window-size={},{}", w, h));
     }
 
     args.extend(options.args.iter().cloned());

@@ -905,7 +905,7 @@ impl BrowserManager {
                 .await
             {
                 if let Some(window_id) = window_info.get("windowId").and_then(|v| v.as_i64()) {
-                    let _ = self
+                    if let Err(e) = self
                         .client
                         .send_command(
                             "Browser.setContentsSize",
@@ -916,7 +916,10 @@ impl BrowserManager {
                             })),
                             None,
                         )
-                        .await;
+                        .await
+                    {
+                        eprintln!("Browser.setContentsSize failed (experimental CDP): {e}");
+                    }
                 }
             }
         }
