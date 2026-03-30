@@ -832,7 +832,10 @@ fn promote_hidden_inputs(
         if !matches!(node.role.as_str(), "LabelText" | "generic") {
             continue;
         }
-        let cursor_info = match node.backend_node_id.and_then(|bid| cursor_elements.get(&bid)) {
+        let cursor_info = match node
+            .backend_node_id
+            .and_then(|bid| cursor_elements.get(&bid))
+        {
             Some(info) => info,
             None => continue,
         };
@@ -1503,5 +1506,4 @@ mod tests {
 
         assert_eq!(nodes[0].role, "LabelText"); // unchanged
     }
-
 }
