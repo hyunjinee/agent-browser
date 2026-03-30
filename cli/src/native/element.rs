@@ -147,41 +147,6 @@ pub fn parse_ref(input: &str) -> Option<String> {
     None
 }
 
-pub async fn resolve_element_center(
-    client: &CdpClient,
-    session_id: &str,
-    ref_map: &RefMap,
-    selector_or_ref: &str,
-    iframe_sessions: &HashMap<String, String>,
-) -> Result<(f64, f64, String), String> {
-    let (object_id, effective_session_id) = resolve_element_object_id(
-        client,
-        session_id,
-        ref_map,
-        selector_or_ref,
-        iframe_sessions,
-    )
-    .await?;
-
-    match get_center_and_viewport(client, &effective_session_id, &object_id).await? {
-        CenterResult::Found { x, y, .. } => Ok((x, y, effective_session_id)),
-        CenterResult::Detached => {
-            let (object_id, effective_session_id) = resolve_element_object_id_fresh(
-                client,
-                session_id,
-                ref_map,
-                selector_or_ref,
-                iframe_sessions,
-            )
-            .await?;
-            match get_center_and_viewport(client, &effective_session_id, &object_id).await? {
-                CenterResult::Found { x, y, .. } => Ok((x, y, effective_session_id)),
-                CenterResult::Detached => Err("Element is detached from the DOM".to_string()),
-            }
-        }
-    }
-}
-
 /// Returns element center and viewport dimensions, or `Detached` if the
 /// element is no longer in the DOM. Checked inside the same JS call as
 /// `getBoundingClientRect` so there is no extra round-trip.
