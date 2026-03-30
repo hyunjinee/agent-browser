@@ -990,18 +990,6 @@ async fn cdp_event_loop(
                                 client_notify.notify_one();
                                 break;
                             }
-                            // Viewport changed — restart screencast with new dimensions
-                            let new_vw = *viewport_width.lock().await;
-                            let new_vh = *viewport_height.lock().await;
-                            if new_vw != vw || new_vh != vh {
-                                let _ = client_arc
-                                    .send_command_no_params("Page.stopScreencast", session_id.as_deref())
-                                    .await;
-                                let mut sc = screencasting.lock().await;
-                                *sc = false;
-                                client_notify.notify_one();
-                                break;
-                            }
                         }
                     }
                 }
