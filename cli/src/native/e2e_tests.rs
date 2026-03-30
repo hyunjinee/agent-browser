@@ -1074,6 +1074,88 @@ async fn e2e_wait() {
 }
 
 // ---------------------------------------------------------------------------
+// Same-document navigation regression test
+// ---------------------------------------------------------------------------
+//
+// Chrome may perform a same-document navigation when it determines the target
+// URL is the same document as the current page (ignoring fragment). This
+// causes Page.loadEventFired to not fire, making wait_for_lifecycle
+// hang forever waiting for an event that never comes.
+//
+// The fix checks loader_id in the Page.navigate response - if None,
+// it's a same-document navigation and we skip waiting for lifecycle events.
+
+#[tokio::test]
+#[ignore]
+async fn e2e_navigate_same_url_twice_should_not_hang() {
+    let mut state = DaemonState::new();
+
+    let resp = execute_command(
+        &json!({ "id": "1", "action": "launch", "headless": true }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    // Navigate to about:blank first to start from a known state
+    let resp = execute_command(
+        &json!({ "id": "2", "action": "navigate", "url": "about:blank" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    // Create a simple HTML page that changes its own URL via history.pushState
+    // This simulates SPA routing behavior which triggers same-document navigation
+    let base_page = "data:text/html,<html><body><script>
+        // On first load, change URL via pushState without navigation
+        history.pushState({}, '', '/#/home');
+    </script><h1>Test</h1></body></html>";
+
+    // Navigate to the page (first time)
+    let resp = execute_command(
+        &json!({ "id": "3", "action": "navigate", "url": base_page }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    // Verify URL changed due to pushState
+    let resp = execute_command(&json!({ "id": "4", "action": "url" }), &mut state).await;
+    assert_success(&resp);
+    let url_after_push = get_data(&resp)["url"].as_str().unwrap();
+    // URL should have changed to include /#/home due to pushState
+    assert!(
+        url_after_push.contains("/%23/home") || url_after_push.contains("/#/home"),
+        "URL should have changed via pushState, got: {}",
+        url_after_push
+    );
+
+    // Navigate to the SAME base URL again
+    // Without fix: Chrome may do same-document nav, wait_for_lifecycle hangs
+    // With fix: We detect loader_id is None and skip waiting
+    let start = std::time::Instant::now();
+    let resp = execute_command(
+        &json!({ "id": "5", "action": "navigate", "url": base_page }),
+        &mut state,
+    )
+    .await;
+    let elapsed = start.elapsed().as_secs();
+
+    // Should complete quickly (< 5 seconds) without hanging
+    // Without fix, this times out after 25 seconds (default_timeout_ms)
+    assert!(
+        elapsed < 5,
+        "Second navigation should not hang, but took {}s",
+        elapsed
+    );
+    assert_success(&resp);
+
+    let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
+    assert_success(&resp);
+}
+
+// ---------------------------------------------------------------------------
 // Viewport with deviceScaleFactor (retina)
 // ---------------------------------------------------------------------------
 
@@ -3594,6 +3676,80 @@ async fn e2e_headers_case_insensitive_no_duplicates() {
         accept_val, "application/test",
         "Case-insensitive merge should replace Chrome's Accept header, got headers: {}",
         result,
+    );
+
+    let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
+    assert_success(&resp);
+}
+
+// ---------------------------------------------------------------------------
+// Regression: externally opened tabs must appear in tab_list (#1037)
+//
+// When connected to Chrome (launched or via --cdp), a tab opened outside of
+// agent-browser (e.g. by the user or another CDP client) should be detected
+// and listed. Previously, chrome://newtab/ was filtered by
+// is_internal_chrome_target, and Target.targetInfoChanged for untracked
+// targets was silently ignored.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore]
+async fn e2e_externally_opened_tab_detected() {
+    let mut state = DaemonState::new();
+
+    // Launch headless Chrome
+    let resp = execute_command(
+        &json!({ "id": "1", "action": "launch", "headless": true }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    // Verify initial tab count
+    let resp = execute_command(&json!({ "id": "2", "action": "tab_list" }), &mut state).await;
+    assert_success(&resp);
+    let initial_count = get_data(&resp)["tabs"].as_array().unwrap().len();
+
+    // Simulate an external client opening a new tab via the browser-level CDP
+    // session (no sessionId). This mirrors what happens when a user manually
+    // opens a tab while agent-browser is connected via --cdp.
+    let browser = state.browser.as_ref().expect("browser should be launched");
+    let _: Value = browser
+        .client
+        .send_command(
+            "Target.createTarget",
+            Some(json!({ "url": "data:text/html,<h1>External Tab</h1>" })),
+            None, // browser-level session
+        )
+        .await
+        .expect("Target.createTarget should succeed");
+
+    // Give Chrome a moment to fire targetCreated / targetInfoChanged events
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Drain events by issuing tab_list — this triggers execute_command's
+    // drain_cdp_events path which processes new and changed targets.
+    let resp = execute_command(&json!({ "id": "3", "action": "tab_list" }), &mut state).await;
+    assert_success(&resp);
+    let tabs = get_data(&resp)["tabs"].as_array().unwrap();
+
+    assert_eq!(
+        tabs.len(),
+        initial_count + 1,
+        "Externally opened tab should appear in tab_list, got: {:?}",
+        tabs,
+    );
+
+    // Verify the new tab's URL is the data URL we navigated to
+    let new_tab = tabs.iter().find(|t| {
+        t["url"]
+            .as_str()
+            .is_some_and(|u| u.starts_with("data:text/html"))
+    });
+    assert!(
+        new_tab.is_some(),
+        "Should find the externally opened tab by URL, tabs: {:?}",
+        tabs,
     );
 
     let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
