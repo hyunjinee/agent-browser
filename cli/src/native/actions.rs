@@ -5399,7 +5399,9 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         .and_then(|v| v.as_str())
         .ok_or("Missing 'target' parameter")?;
 
-    let (sx, sy, source_session_id) = super::element::resolve_element_center(
+    // Resolve source first, then mouseDown before scrolling to target —
+    // scrolling to target would invalidate source's viewport-relative coords.
+    let (sx, sy, source_session_id) = super::interaction::resolve_scroll_and_center(
         &mgr.client,
         &session_id,
         &state.ref_map,
@@ -5407,16 +5409,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         &state.iframe_sessions,
     )
     .await?;
-    let (tx, ty, target_session_id) = super::element::resolve_element_center(
-        &mgr.client,
-        &session_id,
-        &state.ref_map,
-        target,
-        &state.iframe_sessions,
-    )
-    .await?;
 
-    // Mouse down at source
     mgr.client
         .send_command(
             "Input.dispatchMouseEvent",
@@ -5431,6 +5424,15 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
             Some(&source_session_id),
         )
         .await?;
+
+    let (tx, ty, target_session_id) = super::interaction::resolve_scroll_and_center(
+        &mgr.client,
+        &session_id,
+        &state.ref_map,
+        target,
+        &state.iframe_sessions,
+    )
+    .await?;
 
     // Move in steps to target
     let steps = 10;

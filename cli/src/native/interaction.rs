@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use super::cdp::client::CdpClient;
 use super::cdp::types::*;
 use super::element::{
-    get_center_and_viewport, resolve_element_center, resolve_element_object_id,
+    get_center_and_viewport, resolve_element_object_id,
     resolve_element_object_id_fresh, CenterResult, RefMap,
 };
 
@@ -726,7 +726,7 @@ pub async fn select_all(
 
 /// Resolve an element, scroll it into view, and return its center coordinates.
 /// If the cached node turns out to be detached, retries with a fresh lookup.
-async fn resolve_scroll_and_center(
+pub async fn resolve_scroll_and_center(
     client: &CdpClient,
     session_id: &str,
     ref_map: &RefMap,
@@ -943,7 +943,7 @@ pub async fn tap_touch(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (x, y, effective_session_id) = resolve_element_center(
+    let (x, y, effective_session_id) = resolve_scroll_and_center(
         client,
         session_id,
         ref_map,

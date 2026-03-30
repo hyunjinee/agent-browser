@@ -3758,7 +3758,7 @@ async fn e2e_externally_opened_tab_detected() {
 
 #[tokio::test]
 #[ignore]
-async fn e2e_offscreen_scroll_before_click_and_hover() {
+async fn e2e_offscreen_scroll_before_interactions() {
     let mut state = DaemonState::new();
 
     let resp = execute_command(
@@ -3778,6 +3778,10 @@ async fn e2e_offscreen_scroll_before_click_and_hover() {
                   <button id="click-btn" onclick="document.title='clicked'">Click Target</button>
                   <button id="hover-btn" onmouseover="this.dataset.hovered='true'">Hover Target</button>
                   <a href="#" onclick="event.preventDefault(); document.title='ref-clicked'">Ref Link</a>
+                  <button id="tap-btn" ontouchstart="document.title='tapped'">Tap Target</button>
+                  <div id="drag-source" style="width:50px;height:50px;background:red;">Source</div>
+                  <div id="drop-target" style="width:50px;height:50px;background:blue;"
+                       onpointerover="this.dataset.draggedOver='true'">Target</div>
                 </body></html>
             "##,
         }),
@@ -3786,6 +3790,7 @@ async fn e2e_offscreen_scroll_before_click_and_hover() {
     .await;
     assert_success(&resp);
 
+    // -- click --
     let resp = execute_command(
         &json!({ "id": "3", "action": "click", "selector": "#click-btn" }),
         &mut state,
@@ -3805,6 +3810,7 @@ async fn e2e_offscreen_scroll_before_click_and_hover() {
         "Click handler should have fired on the off-screen button"
     );
 
+    // -- hover --
     let resp = execute_command(
         &json!({ "id": "5", "action": "hover", "selector": "#hover-btn" }),
         &mut state,
@@ -3827,6 +3833,7 @@ async fn e2e_offscreen_scroll_before_click_and_hover() {
         "Hover handler should have fired on the off-screen button"
     );
 
+    // -- click by ref --
     let resp = execute_command(&json!({ "id": "7", "action": "snapshot" }), &mut state).await;
     assert_success(&resp);
     let snapshot = get_data(&resp)["snapshot"].as_str().unwrap();
@@ -3858,6 +3865,49 @@ async fn e2e_offscreen_scroll_before_click_and_hover() {
         get_data(&resp)["result"],
         "ref-clicked",
         "Click via ref should have fired on the off-screen element"
+    );
+
+    // -- tap --
+    let resp = execute_command(
+        &json!({ "id": "10", "action": "tap", "selector": "#tap-btn" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({ "id": "11", "action": "evaluate", "script": "document.title" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(
+        get_data(&resp)["result"],
+        "tapped",
+        "Tap handler should have fired on the off-screen button"
+    );
+
+    // -- drag (uses pointer events, not HTML5 drag & drop) --
+    let resp = execute_command(
+        &json!({ "id": "12", "action": "drag", "source": "#drag-source", "target": "#drop-target" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({
+            "id": "13", "action": "evaluate",
+            "script": "document.getElementById('drop-target').dataset.draggedOver"
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(
+        get_data(&resp)["result"],
+        "true",
+        "Pointer should have moved over the off-screen drop target during drag"
     );
 
     let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
