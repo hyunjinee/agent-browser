@@ -213,6 +213,7 @@ pub struct DaemonState {
     pub pending_dialog: Option<PendingDialog>,
     /// Tracks an open file chooser dialog's backendNodeId from `Page.fileChooserOpened`.
     /// Consumed by `upload` when called without a selector.
+    /// Must be cleared alongside `ref_map` whenever the active page changes.
     pub pending_file_chooser: Option<i64>,
     /// When true, automatically dismiss `beforeunload` dialogs and accept `alert`
     /// dialogs so they never block the agent.  Enabled by default.
@@ -2353,6 +2354,7 @@ async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
         let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
         state.ref_map.clear();
+        state.pending_file_chooser = None;
         mgr.tab_new(Some(&href)).await?;
 
         return Ok(json!({ "clicked": selector, "newTab": true, "url": href }));
@@ -5757,6 +5759,7 @@ async fn handle_window_new(cmd: &Value, state: &mut DaemonState) -> Result<Value
 
     let total = mgr.page_count();
     state.ref_map.clear();
+    state.pending_file_chooser = None;
 
     Ok(json!({ "index": total - 1, "total": total }))
 }
