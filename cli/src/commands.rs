@@ -237,14 +237,11 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                 });
             }
             let first = &rest[0];
-            let first_is_selector = first.starts_with('@')
-                || first.starts_with('#')
-                || (first.starts_with('.')
-                    && !first.starts_with("./")
-                    && !first.starts_with(".\\"))
-                || first.starts_with("xpath=")
-                || first.starts_with("text=");
-            let first_is_path = !first_is_selector && (first.contains('/') || first.contains('\\'));
+            let first_is_path = first.starts_with('/')
+                || first.starts_with("./")
+                || first.starts_with("../")
+                || first.starts_with(".\\")
+                || first.starts_with("..\\");
             if first_is_path {
                 Ok(json!({ "id": id, "action": "upload", "files": &rest[..] }))
             } else {
