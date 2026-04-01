@@ -159,8 +159,7 @@ async fn run_socket_server(
     let mut drain_interval = tokio::time::interval(Duration::from_millis(500));
     drain_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    let idle_sleep = idle_timeout_ms
-        .map(|ms| tokio::time::sleep(Duration::from_millis(ms)));
+    let idle_sleep = idle_timeout_ms.map(|ms| tokio::time::sleep(Duration::from_millis(ms)));
     let mut idle_sleep_pin = idle_sleep.map(Box::pin);
 
     loop {
@@ -264,8 +263,7 @@ async fn run_socket_server(
     let (reset_tx, mut reset_rx) = mpsc::channel::<()>(64);
     let reset_tx = idle_timeout_ms.map(|_| Arc::new(reset_tx));
 
-    let idle_sleep = idle_timeout_ms
-        .map(|ms| tokio::time::sleep(Duration::from_millis(ms)));
+    let idle_sleep = idle_timeout_ms.map(|ms| tokio::time::sleep(Duration::from_millis(ms)));
     let mut idle_sleep_pin = idle_sleep.map(Box::pin);
 
     loop {
@@ -556,8 +554,9 @@ mod tests {
         let start = tokio::time::Instant::now();
 
         let exited = tokio::time::timeout(Duration::from_secs(5), async {
-            let mut idle_sleep_pin =
-                Some(Box::pin(tokio::time::sleep(Duration::from_millis(idle_timeout_ms))));
+            let mut idle_sleep_pin = Some(Box::pin(tokio::time::sleep(Duration::from_millis(
+                idle_timeout_ms,
+            ))));
 
             loop {
                 tokio::select! {
