@@ -589,6 +589,12 @@ impl DaemonState {
                     .client
                     .send_command_no_params("Accessibility.enable", Some(iframe_sid.as_str()))
                     .await;
+                if self.har_recording || self.request_tracking {
+                    let _ = mgr
+                        .client
+                        .send_command_no_params("Network.enable", Some(iframe_sid.as_str()))
+                        .await;
+                }
             }
         }
         for sid in &drained.detached_iframe_sessions {
@@ -754,7 +760,17 @@ impl DaemonState {
                         false
                     };
 
-                    if !session_matches {
+                    // Allow Network events from cross-origin iframe sessions
+                    // when HAR recording or request tracking is active.
+                    let iframe_network_event = !session_matches
+                        && (self.har_recording || self.request_tracking)
+                        && event.method.starts_with("Network.")
+                        && event
+                            .session_id
+                            .as_ref()
+                            .is_some_and(|sid| self.iframe_sessions.values().any(|v| v == sid));
+
+                    if !session_matches && !iframe_network_event {
                         continue;
                     }
 
@@ -990,6 +1006,33 @@ impl DaemonState {
                                 }
                             }
                         }
+                        "Network.loadingFailed" if self.har_recording => {
+                            let request_id = event
+                                .params
+                                .get("requestId")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let timestamp = event.params.get("timestamp").and_then(|v| v.as_f64());
+                            let error_text = event
+                                .params
+                                .get("errorText")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Failed");
+                            if let Some(entry) = self
+                                .har_entries
+                                .iter_mut()
+                                .rev()
+                                .find(|e| e.request_id == request_id)
+                            {
+                                if entry.status.is_none() {
+                                    entry.status = Some(0);
+                                    entry.status_text = error_text.to_string();
+                                }
+                                if let Some(ts) = timestamp {
+                                    entry.loading_finished_timestamp = Some(ts);
+                                }
+                            }
+                        }
                         "Page.screencastFrame" => {
                             // Frame broadcasting and acks are handled in real-time by the
                             // stream server's background CDP event loop. Here we just
@@ -1035,7 +1078,10 @@ impl DaemonState {
                     }
                 }
                 Err(broadcast::error::TryRecvError::Empty) => break,
-                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    eprintln!("[agent-browser] Warning: CDP event buffer overflowed, {} events dropped. Network requests may be missing from HAR output.", n);
+                    continue;
+                }
                 Err(broadcast::error::TryRecvError::Closed) => {
                     self.event_rx = None;
                     break;
@@ -1462,6 +1508,49 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
         return Ok(());
     }
 
+    // Cloud provider: when AGENT_BROWSER_PROVIDER is set, connect via the
+    // provider API instead of launching a local Chrome instance.  This mirrors
+    // the logic in handle_launch() so that auto_launch (triggered by any
+    // command arriving before an explicit "launch") honours the provider env.
+    if let Ok(provider) = env::var("AGENT_BROWSER_PROVIDER") {
+        let p = provider.to_lowercase();
+        // ios/safari are device providers handled via explicit launch command
+        if !p.is_empty() && p != "ios" && p != "safari" {
+            let conn = providers::connect_provider(&p).await?;
+            let ws_headers = if p == "agentcore" {
+                providers::take_agentcore_ws_headers()
+            } else {
+                None
+            };
+            let connect_result = if conn.direct_page {
+                BrowserManager::connect_cdp_direct(&conn.ws_url).await
+            } else if ws_headers.is_some() {
+                BrowserManager::connect_cdp_with_headers(&conn.ws_url, ws_headers).await
+            } else {
+                BrowserManager::connect_cdp(&conn.ws_url).await
+            };
+            match connect_result {
+                Ok(mgr) => {
+                    state.reset_input_state();
+                    state.browser = Some(mgr);
+                    state.subscribe_to_browser_events();
+                    state.start_fetch_handler();
+                    state.start_dialog_handler();
+                    state.update_stream_client().await;
+                    write_provider_file(&state.session_id, &p);
+                    try_auto_restore_state(state).await;
+                    return Ok(());
+                }
+                Err(e) => {
+                    if let Some(ref ps) = conn.session {
+                        providers::close_provider_session(ps).await;
+                    }
+                    return Err(format!("Provider '{}' connection failed: {}", p, e));
+                }
+            }
+        }
+    }
+
     let hash = launch_hash(&options);
     let mgr = BrowserManager::launch(options, engine.as_deref()).await?;
     state.reset_input_state();
@@ -1713,8 +1802,22 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
                 return launch_safari(cmd, state).await;
             }
             _ => {
-                let (ws_url, provider_session) = providers::connect_provider(provider).await?;
-                match BrowserManager::connect_cdp(&ws_url).await {
+                let conn = providers::connect_provider(provider).await?;
+
+                let ws_headers = if provider.eq_ignore_ascii_case("agentcore") {
+                    providers::take_agentcore_ws_headers()
+                } else {
+                    None
+                };
+
+                let connect_result = if conn.direct_page {
+                    BrowserManager::connect_cdp_direct(&conn.ws_url).await
+                } else if ws_headers.is_some() {
+                    BrowserManager::connect_cdp_with_headers(&conn.ws_url, ws_headers).await
+                } else {
+                    BrowserManager::connect_cdp(&conn.ws_url).await
+                };
+                match connect_result {
                     Ok(mgr) => {
                         state.reset_input_state();
                         state.browser = Some(mgr);
@@ -1722,10 +1825,21 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
                         state.start_fetch_handler();
                         state.start_dialog_handler();
                         state.update_stream_client().await;
+                        write_provider_file(&state.session_id, provider);
+
+                        if let Some(info) = providers::get_agentcore_info() {
+                            return Ok(json!({
+                                "launched": true,
+                                "provider": provider,
+                                "agentCoreSessionId": info.session_id,
+                                "agentCoreLiveViewUrl": info.live_view_url
+                            }));
+                        }
+
                         return Ok(json!({ "launched": true, "provider": provider }));
                     }
                     Err(e) => {
-                        if let Some(ref ps) = provider_session {
+                        if let Some(ref ps) = conn.session {
                             providers::close_provider_session(ps).await;
                         }
                         return Err(e);
@@ -1838,6 +1952,7 @@ async fn launch_ios(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
     state.backend_type = BackendType::WebDriver;
     state.engine = "safari".to_string();
     write_engine_file(&state.session_id, &state.engine);
+    write_provider_file(&state.session_id, "ios");
     write_extensions_file(&state.session_id);
     state.reset_input_state();
 
@@ -1885,6 +2000,7 @@ async fn launch_safari(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
     state.backend_type = BackendType::WebDriver;
     state.engine = "safari".to_string();
     write_engine_file(&state.session_id, &state.engine);
+    write_provider_file(&state.session_id, "safari");
     write_extensions_file(&state.session_id);
     state.reset_input_state();
 
@@ -4584,6 +4700,18 @@ fn remove_engine_file(session_id: &str) {
     let _ = fs::remove_file(engine_file_path(session_id));
 }
 
+fn provider_file_path(session_id: &str) -> PathBuf {
+    get_socket_dir().join(format!("{}.provider", session_id))
+}
+
+fn write_provider_file(session_id: &str, provider: &str) {
+    let _ = fs::write(provider_file_path(session_id), provider);
+}
+
+fn remove_provider_file(session_id: &str) {
+    let _ = fs::remove_file(provider_file_path(session_id));
+}
+
 fn extensions_file_path(session_id: &str) -> PathBuf {
     get_socket_dir().join(format!("{}.extensions", session_id))
 }
@@ -4673,6 +4801,7 @@ async fn handle_stream_disable(state: &mut DaemonState) -> Result<Value, String>
     state.stream_client = None;
     remove_stream_file(&state.session_id)?;
     remove_engine_file(&state.session_id);
+    remove_provider_file(&state.session_id);
 
     Ok(json!({ "disabled": true }))
 }
@@ -5456,12 +5585,13 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
     mgr.client
         .send_command(
             "Input.dispatchMouseEvent",
-            Some(json!({ "type": "mousePressed", "x": sx, "y": sy, "button": "left", "clickCount": 1 })),
+            Some(json!({ "type": "mousePressed", "x": sx, "y": sy, "button": "left", "buttons": 1, "clickCount": 1 })),
             Some(&source_session_id),
         )
         .await?;
 
-    // Move in steps to target
+    // Move in steps to target, keeping the left button held (buttons: 1) so
+    // that the browser sees a drag rather than a plain pointer move.
     let steps = 10;
     for i in 1..=steps {
         let cx = sx + (tx - sx) * (i as f64) / (steps as f64);
@@ -5469,7 +5599,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         mgr.client
             .send_command(
                 "Input.dispatchMouseEvent",
-                Some(json!({ "type": "mouseMoved", "x": cx, "y": cy })),
+                Some(json!({ "type": "mouseMoved", "x": cx, "y": cy, "button": "left", "buttons": 1 })),
                 Some(&target_session_id),
             )
             .await?;
@@ -5480,7 +5610,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
     mgr.client
         .send_command(
             "Input.dispatchMouseEvent",
-            Some(json!({ "type": "mouseReleased", "x": tx, "y": ty, "button": "left", "clickCount": 1 })),
+            Some(json!({ "type": "mouseReleased", "x": tx, "y": ty, "button": "left", "buttons": 0, "clickCount": 1 })),
             Some(&target_session_id),
         )
         .await?;
@@ -5842,6 +5972,14 @@ async fn handle_har_start(state: &mut DaemonState) -> Result<Value, String> {
     mgr.client
         .send_command_no_params("Network.enable", Some(&session_id))
         .await?;
+    // Also enable Network on cross-origin iframe sessions so their
+    // requests are captured in the HAR output.
+    for iframe_sid in state.iframe_sessions.values() {
+        let _ = mgr
+            .client
+            .send_command_no_params("Network.enable", Some(iframe_sid.as_str()))
+            .await;
+    }
     state.har_recording = true;
     state.har_entries.clear();
     Ok(json!({ "started": true }))

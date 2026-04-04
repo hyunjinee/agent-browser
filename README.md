@@ -1,6 +1,6 @@
 # agent-browser
 
-Headless browser automation CLI for AI agents. Fast native Rust CLI.
+Browser automation CLI for AI agents. Fast native Rust CLI.
 
 ## Installation
 
@@ -70,7 +70,7 @@ Detects your installation method (npm, Homebrew, or Cargo) and runs the appropri
 
 ### Requirements
 
-- **Chrome** - Run `agent-browser install` to download Chrome from [Chrome for Testing](https://developer.chrome.com/blog/chrome-for-testing/) (Google's official automation channel). No Playwright or Node.js required for the daemon.
+- **Chrome** - Run `agent-browser install` to download Chrome from [Chrome for Testing](https://developer.chrome.com/blog/chrome-for-testing/) (Google's official automation channel). Existing Chrome, Brave, Playwright, and Puppeteer installations are detected automatically. No Playwright or Node.js required for the daemon.
 - **Rust** - Only needed when building from source (see From Source above).
 
 ## Quick Start
@@ -334,6 +334,7 @@ agent-browser trace stop [path]       # Stop and save trace
 agent-browser profiler start          # Start Chrome DevTools profiling
 agent-browser profiler stop [path]    # Stop and save profile (.json)
 agent-browser console                 # View console messages (log, error, warn, info)
+agent-browser console --json          # JSON output with raw CDP args for programmatic access
 agent-browser console --clear         # Clear console
 agent-browser errors                  # View page errors (uncaught JavaScript exceptions)
 agent-browser errors --clear          # Clear errors
@@ -625,6 +626,7 @@ The dashboard displays:
 - **Live viewport** -- real-time JPEG frames from the browser
 - **Activity feed** -- chronological command/result stream with timing and expandable details
 - **Console output** -- browser console messages (log, warn, error)
+- **Session creation** -- create new sessions from the UI with local engines (Chrome, Lightpanda) or cloud providers (AgentCore, Browserbase, Browserless, Browser Use, Kernel)
 
 ## Configuration
 
@@ -1314,6 +1316,39 @@ When enabled, agent-browser connects to a Kernel cloud session instead of launch
 **Profile Persistence:** When `KERNEL_PROFILE_NAME` is set, the profile will be created if it doesn't already exist. Cookies, logins, and session data are automatically saved back to the profile when the browser session ends, making them available for future sessions.
 
 Get your API key from the [Kernel Dashboard](https://dashboard.onkernel.com).
+
+### AgentCore
+
+[AWS Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) provides cloud browser sessions with SigV4 authentication.
+
+To enable AgentCore, use the `-p` flag:
+
+```bash
+agent-browser -p agentcore open https://example.com
+```
+
+Or use environment variables for CI/scripts:
+
+```bash
+export AGENT_BROWSER_PROVIDER=agentcore
+agent-browser open https://example.com
+```
+
+Credentials are automatically resolved from environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) or the AWS CLI (`aws configure export-credentials`), which supports SSO, profiles, and IAM roles.
+
+Optional configuration via environment variables:
+
+| Variable                   | Description                                                          | Default          |
+| -------------------------- | -------------------------------------------------------------------- | ---------------- |
+| `AGENTCORE_REGION`         | AWS region for the AgentCore endpoint                                | `us-east-1`      |
+| `AGENTCORE_BROWSER_ID`     | Browser identifier                                                   | `aws.browser.v1` |
+| `AGENTCORE_PROFILE_ID`     | Browser profile for persistent state (cookies, localStorage)         | (none)           |
+| `AGENTCORE_SESSION_TIMEOUT`| Session timeout in seconds                                           | `3600`           |
+| `AWS_PROFILE`              | AWS CLI profile for credential resolution                            | `default`        |
+
+**Browser profiles:** When `AGENTCORE_PROFILE_ID` is set, browser state (cookies, localStorage) is persisted across sessions automatically.
+
+When enabled, agent-browser connects to an AgentCore cloud browser session instead of launching a local browser. All commands work identically.
 
 ## License
 

@@ -1,5 +1,69 @@
 # agent-browser
 
+## 0.24.0
+
+<!-- release:start -->
+### New Features
+
+- **AWS Bedrock AgentCore provider** - Added AWS Bedrock AgentCore as a cloud browser provider. Connect with `--provider agentcore` or `AGENT_BROWSER_PROVIDER=agentcore`. Uses lightweight manual SigV4 signing for authentication with support for the full AWS credential provider chain (environment variables, AWS CLI, SSO, IAM roles). Configure with `AGENTCORE_REGION`, `AGENTCORE_PROFILE_ID`, and `AGENTCORE_BROWSER_ID` environment variables. Returns session ID and Live View URL in the launch response (#397)
+
+### Documentation
+
+- Added AgentCore provider page to docs site, README options table, SKILL.md, and dashboard provider icons (#1120)
+
+### Contributors
+
+- @ctate
+- @pahud
+<!-- release:end -->
+
+## 0.23.4
+
+### Bug Fixes
+
+- Fixed **daemon hang on Linux** caused by a `waitpid(-1)` race condition in the SIGCHLD handler that stole exit statuses from Rust's `Child` handles, leaving the daemon in a broken state. Replaced the global signal handler with targeted crash detection via the existing drain interval (#1098)
+
+## 0.23.3
+
+### Bug Fixes
+
+- Fixed **drag and drop** not working because `mouseMoved` events during the drag omitted the `buttons` bitmask, causing the browser to see `event.buttons === 0` and never fire `dragstart`/`dragover`/`drop` (#1087)
+
+## 0.23.2
+
+### Patch Changes
+
+- 3c942e2: ### New Features
+
+  - **Dashboard session creation** - Sessions can now be created directly from the dashboard UI. A new session dialog provides a unified selector grid for local engines (Chrome, Lightpanda) and cloud providers (Browserbase, Browserless, Browser Use, Kernel) with async creation, loading state, and error display (#1092)
+  - **Dashboard provider icons** - The session sidebar now shows the provider or engine icon for each session, making it easy to identify which backend a session is using (#1092)
+
+  ### Bug Fixes
+
+  - Fixed **Browser Use** provider using an intermediate API call instead of connecting directly via WSS (`wss://connect.browser-use.com`), which caused connection failures (#1092)
+  - Fixed **Browserbase** provider not sending an explicit JSON body and `Content-Type` header, causing session creation to fail (#1092)
+  - Fixed **provider navigation** hanging because `wait_for_lifecycle` waited for page load events that remote providers may not emit. Navigation with `--provider` now automatically sets `waitUntil=none` (#1092)
+  - Fixed **remote CDP connections** timing out by increasing the CDP connect timeout from 10s to 25s for cloud providers (#1092)
+  - Fixed **zombie daemon processes** not being cleaned up when a provider connection fails during session creation from the dashboard (#1092)
+
+## 0.23.1
+
+### Patch Changes
+
+- fbcab37: ### New Features
+
+  - **Auto-dismissal for alert and beforeunload dialogs** - JavaScript `alert()` and `beforeunload` dialogs are now automatically accepted to prevent the agent from blocking indefinitely. `confirm` and `prompt` dialogs still require explicit `dialog accept/dismiss` commands. Disable with `--no-auto-dialog` flag or `AGENT_BROWSER_NO_AUTO_DIALOG` environment variable (#1075)
+  - **Puppeteer browser cache fallback** - Chrome discovery now searches `~/.cache/puppeteer/chrome/` (or `PUPPETEER_CACHE_DIR`) for Chrome binaries, so users with an existing Puppeteer installation can use agent-browser without a separate install step (#1088)
+  - **Console output improvements** - `console.log` of objects now shows the actual object preview (e.g. `{userId: "abc", count: 42}`) instead of `"Object"`. JSON output includes a raw `args` array for programmatic access (#1040)
+
+  ### Bug Fixes
+
+  - Fixed **same-document navigation** (e.g. SPA hash routing) hanging forever because `wait_for_lifecycle` waited for a `Page.loadEventFired` that never fires on same-document navigations (#1059)
+  - Fixed **save_state** only capturing cookies and localStorage for the current origin, silently dropping cross-domain data (e.g. SSO/CAS auth cookies). Now uses `Network.getAllCookies` and collects localStorage from all visited origins (#1064)
+  - Fixed **externally opened tabs** not appearing in `tab list` when using `--cdp` mode. Tabs opened by the user or another CDP client are now detected and tracked (#1042)
+  - Fixed **dashboard server** not picking up installed files without a restart. `dashboard install` now takes effect immediately on a running server (#1066)
+  - Fixed **Windows Chrome extraction** failing because zip path normalization used forward slashes while the extraction code expected backslashes (#1088)
+
 ## 0.23.0
 
 ### Minor Changes

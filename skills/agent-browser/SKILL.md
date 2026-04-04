@@ -6,7 +6,7 @@ allowed-tools: Bash(npx agent-browser:*), Bash(agent-browser:*)
 
 # Browser Automation with agent-browser
 
-The CLI uses Chrome/Chromium via CDP directly. Install via `npm i -g agent-browser`, `brew install agent-browser`, or `cargo install agent-browser`. Run `agent-browser install` to download Chrome. Run `agent-browser upgrade` to update to the latest version.
+The CLI uses Chrome/Chromium via CDP directly. Install via `npm i -g agent-browser`, `brew install agent-browser`, or `cargo install agent-browser`. Run `agent-browser install` to download Chrome. Existing Chrome, Brave, Playwright, and Puppeteer installations are detected automatically. Run `agent-browser upgrade` to update to the latest version.
 
 ## Core Workflow
 
@@ -187,7 +187,7 @@ agent-browser clipboard paste                     # Paste from clipboard
 # Dialogs (alert, confirm, prompt, beforeunload)
 # By default, alert and beforeunload dialogs are auto-accepted so they never block the agent.
 # confirm and prompt dialogs still require explicit handling.
-# Use --no-auto-dialog to disable automatic handling.
+# Use --no-auto-dialog (or AGENT_BROWSER_NO_AUTO_DIALOG=1) to disable automatic handling.
 agent-browser dialog accept              # Accept dialog
 agent-browser dialog accept "my input"   # Accept prompt dialog with text
 agent-browser dialog dismiss             # Dismiss/cancel dialog
@@ -693,6 +693,25 @@ Priority (lowest to highest): `~/.agent-browser/config.json` < `./agent-browser.
 | [references/profiling.md](references/profiling.md)                   | Chrome DevTools profiling for performance analysis        |
 | [references/proxy-support.md](references/proxy-support.md)           | Proxy configuration, geo-testing, rotating proxies        |
 
+## Cloud Providers
+
+Use `-p <provider>` (or `AGENT_BROWSER_PROVIDER`) to run against a cloud browser instead of launching a local Chrome instance. Supported providers: `agentcore`, `browserbase`, `browserless`, `browseruse`, `kernel`.
+
+### AgentCore (AWS Bedrock)
+
+```bash
+# Credentials auto-resolved from env vars or AWS CLI (SSO, IAM roles, etc.)
+agent-browser -p agentcore open https://example.com
+
+# With persistent browser profile
+AGENTCORE_PROFILE_ID=my-profile agent-browser -p agentcore open https://example.com
+
+# With explicit region
+AGENTCORE_REGION=eu-west-1 agent-browser -p agentcore open https://example.com
+```
+
+Set `AWS_PROFILE` to select a named AWS profile.
+
 ## Browser Engine Selection
 
 Use `--engine` to choose a local browser engine. The default is `chrome`.
@@ -733,7 +752,7 @@ agent-browser open example.com
 agent-browser dashboard stop
 ```
 
-The dashboard runs independently of browser sessions on port 4848 (configurable with `--port`). All sessions automatically stream to the dashboard.
+The dashboard runs independently of browser sessions on port 4848 (configurable with `--port`). All sessions automatically stream to the dashboard. Sessions can also be created from the dashboard UI with local engines or cloud providers.
 
 ## Ready-to-Use Templates
 
