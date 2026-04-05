@@ -5271,7 +5271,6 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
     let selector = "[data-agent-browser-located='true']";
     let result = execute_subaction(cmd, state, selector).await;
 
-    // Clean up the marker attribute on the correct session (may be an iframe).
     if let Some(ref browser) = state.browser {
         let _cleanup: Result<super::cdp::types::EvaluateResult, _> = browser
             .client
@@ -5308,7 +5307,6 @@ fn find_ax_node_by_role(
             continue;
         }
 
-        // If no name filter requested, accept the first role match.
         let Some(target_name) = name else {
             return node
                 .backend_d_o_m_node_id
@@ -8539,8 +8537,6 @@ mod tests {
         }
     }
 
-    // -- find_ax_node_by_role regression tests (issue #1123) --
-
     use super::super::cdp::types::{AXNode, AXValue};
 
     fn make_ax_node(
@@ -8591,10 +8587,8 @@ mod tests {
             make_ax_node("2", "link", "Less info", Some(11), false),
         ];
 
-        // exact=true: must match fully
         assert!(find_ax_node_by_role(&nodes, "link", Some("More"), true).is_err());
 
-        // exact=false: substring match
         let result = find_ax_node_by_role(&nodes, "link", Some("More"), false);
         assert_eq!(result.unwrap(), 10);
     }
@@ -8606,7 +8600,6 @@ mod tests {
             make_ax_node("2", "button", "Submit", Some(6), false),
         ];
 
-        // No name filter: returns first matching role
         let result = find_ax_node_by_role(&nodes, "button", None, false);
         assert_eq!(result.unwrap(), 6);
     }
