@@ -5229,31 +5229,35 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
         )
         .await?;
 
-    let backend_node_id = find_ax_node_by_role(&ax_tree.nodes, role, name, exact)?;
+    let (backend_node_id, actual_name) = find_ax_node_by_role(&ax_tree.nodes, role, name, exact)?;
 
     // Register a temporary ref so execute_subaction can resolve the element
     // via backendNodeId directly — no marker attribute needed.
-    let temp_ref = format!("e{}", state.ref_map.next_ref_num());
+    let ref_num = state.ref_map.next_ref_num();
+    let temp_ref = format!("e{}", ref_num);
     state.ref_map.add_with_frame(
         temp_ref.clone(),
         Some(backend_node_id),
         role,
-        name.unwrap_or(""),
+        &actual_name,
         None,
         state.active_frame_id.as_deref(),
     );
+    state.ref_map.set_next_ref_num(ref_num + 1);
 
-    execute_subaction(cmd, state, &format!("@{}", temp_ref)).await
+    let result = execute_subaction(cmd, state, &format!("@{}", temp_ref)).await;
+    state.ref_map.remove(&temp_ref);
+    result
 }
 
 /// Search the accessibility tree for a node matching the given role and
-/// optional name. Returns the `backendDOMNodeId` of the first match.
+/// optional name. Returns `(backendDOMNodeId, actual_name)` of the first match.
 fn find_ax_node_by_role(
     nodes: &[super::cdp::types::AXNode],
     role: &str,
     name: Option<&str>,
     exact: bool,
-) -> Result<i64, String> {
+) -> Result<(i64, String), String> {
     for node in nodes {
         if node.ignored.unwrap_or(false) {
             continue;
@@ -5264,13 +5268,15 @@ fn find_ax_node_by_role(
             continue;
         }
 
+        let node_name = super::element::extract_ax_string(&node.name);
+
         let Some(target_name) = name else {
-            return node
+            let id = node
                 .backend_d_o_m_node_id
-                .ok_or_else(|| format!("AX node has no backendDOMNodeId for role={}", role));
+                .ok_or_else(|| format!("AX node has no backendDOMNodeId for role={}", role))?;
+            return Ok((id, node_name));
         };
 
-        let node_name = super::element::extract_ax_string(&node.name);
         let matches = if exact {
             node_name == target_name
         } else {
@@ -5278,12 +5284,13 @@ fn find_ax_node_by_role(
         };
 
         if matches {
-            return node.backend_d_o_m_node_id.ok_or_else(|| {
+            let id = node.backend_d_o_m_node_id.ok_or_else(|| {
                 format!(
                     "AX node has no backendDOMNodeId for role={} name={}",
                     role, target_name
                 )
-            });
+            })?;
+            return Ok((id, node_name));
         }
     }
 
@@ -8533,8 +8540,9 @@ mod tests {
             make_ax_node("3", "link", "Another Link", Some(43), false),
         ];
 
-        let result = find_ax_node_by_role(&nodes, "link", Some("Example Link"), true);
-        assert_eq!(result.unwrap(), 42);
+        let (id, name) = find_ax_node_by_role(&nodes, "link", Some("Example Link"), true).unwrap();
+        assert_eq!(id, 42);
+        assert_eq!(name, "Example Link");
     }
 
     #[test]
@@ -8546,8 +8554,8 @@ mod tests {
 
         assert!(find_ax_node_by_role(&nodes, "link", Some("More"), true).is_err());
 
-        let result = find_ax_node_by_role(&nodes, "link", Some("More"), false);
-        assert_eq!(result.unwrap(), 10);
+        let (id, _) = find_ax_node_by_role(&nodes, "link", Some("More"), false).unwrap();
+        assert_eq!(id, 10);
     }
 
     #[test]
@@ -8557,8 +8565,8 @@ mod tests {
             make_ax_node("2", "button", "Submit", Some(6), false),
         ];
 
-        let result = find_ax_node_by_role(&nodes, "button", None, false);
-        assert_eq!(result.unwrap(), 6);
+        let (id, _) = find_ax_node_by_role(&nodes, "button", None, false).unwrap();
+        assert_eq!(id, 6);
     }
 
     #[test]
@@ -8571,7 +8579,7 @@ mod tests {
         let result = find_ax_node_by_role(&nodes, "link", Some("Hidden Link"), true);
         assert!(result.is_err());
 
-        let result = find_ax_node_by_role(&nodes, "link", Some("Visible Link"), true);
-        assert_eq!(result.unwrap(), 100);
+        let (id, _) = find_ax_node_by_role(&nodes, "link", Some("Visible Link"), true).unwrap();
+        assert_eq!(id, 100);
     }
 }

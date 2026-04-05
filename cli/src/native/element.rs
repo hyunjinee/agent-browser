@@ -103,6 +103,10 @@ impl RefMap {
         entries
     }
 
+    pub fn remove(&mut self, ref_id: &str) {
+        self.map.remove(ref_id);
+    }
+
     pub fn clear(&mut self) {
         self.map.clear();
         self.next_ref = 1;
