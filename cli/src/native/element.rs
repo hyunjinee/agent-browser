@@ -380,7 +380,7 @@ async fn find_node_id_by_role_name(
     ))
 }
 
-fn extract_ax_string(value: &Option<AXValue>) -> String {
+pub(super) fn extract_ax_string(value: &Option<AXValue>) -> String {
     match value {
         Some(v) => match &v.value {
             Some(Value::String(s)) => s.clone(),
