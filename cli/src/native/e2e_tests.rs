@@ -3062,7 +3062,15 @@ async fn start_delayed_login_server(
       setTimeout(() => {{
         const root = document.getElementById('root');
         root.innerHTML = `
-          <form id="login-form" onsubmit="event.preventDefault(); window.__submitted = true;">
+          <form id="login-form" onsubmit="
+            var s = document.querySelector('#search');
+            document.cookie = 'test_user=' + encodeURIComponent(this.email.value) + '; path=/';
+            document.cookie = 'test_pass=' + encodeURIComponent(this.password.value) + '; path=/';
+            document.cookie = 'test_search=' + encodeURIComponent(s ? s.value : '') + '; path=/';
+            document.cookie = 'test_submitted=1; path=/';
+            event.preventDefault();
+            window.__submitted = true;
+          ">
             <input type="email" name="email" />
             <input type="password" name="password" />
             <button type="submit">Sign in</button>
@@ -3136,9 +3144,10 @@ async fn e2e_auth_login_waits_for_delayed_spa_form_render() {
     assert_eq!(get_data(&login)["loggedIn"], true);
 
     // auth_login may navigate away from the login page after submitting
-    // (its post-submit navigation wait can land on about:blank in CI).
-    // Re-navigate to the login page to verify the form rendered correctly
-    // and that auth_login used the email input (not the decoy search input).
+    // (its post-submit navigation wait can catch a stale Page.frameNavigated
+    // event in CI, leaving the browser on about:blank).  The onsubmit handler
+    // persists filled values as cookies before calling preventDefault(), so we
+    // can re-navigate to the same origin and read them back.
     let resp = execute_command(
         &json!({ "id": "4", "action": "navigate", "url": format!("{}/login", base_url) }),
         &mut state,
@@ -3146,34 +3155,32 @@ async fn e2e_auth_login_waits_for_delayed_spa_form_render() {
     .await;
     assert_success(&resp);
 
-    // Wait for the delayed form to render
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
     let verify = execute_command(
         &json!({
             "id": "5",
             "action": "evaluate",
-            "script": "({ formExists: !!document.getElementById('login-form'), emailExists: !!document.querySelector('input[type=email]'), searchExists: !!document.querySelector('#search') })",
+            "script": r#"(() => {
+                const c = Object.fromEntries(document.cookie.split('; ').map(s => {
+                    const [k, ...v] = s.split('=');
+                    return [k, decodeURIComponent(v.join('='))];
+                }));
+                return {
+                    user: c.test_user || '',
+                    pass: c.test_pass || '',
+                    search: c.test_search || '',
+                    submitted: c.test_submitted === '1',
+                };
+            })()"#,
         }),
         &mut state,
     )
     .await;
     assert_success(&verify);
     let result = &get_data(&verify)["result"];
-    // Verify the delayed form rendered (proves the server/page setup works)
-    assert_eq!(
-        result["formExists"], true,
-        "login form should render after delay"
-    );
-    assert_eq!(
-        result["emailExists"], true,
-        "email input should exist in rendered form"
-    );
-    // Verify the decoy search input is present (proves preferred selector discrimination)
-    assert_eq!(
-        result["searchExists"], true,
-        "decoy search input should be present"
-    );
+    assert_eq!(result["user"], "user@example.com");
+    assert_eq!(result["pass"], "super-secret");
+    assert_eq!(result["search"], "");
+    assert_eq!(result["submitted"], true);
 
     let _ = execute_command(
         &json!({ "id": "6", "action": "auth_delete", "name": profile_name }),
