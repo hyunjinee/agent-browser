@@ -4166,10 +4166,7 @@ async fn e2e_recording_inherits_viewport() {
 
     // Start recording — this creates a new browser context and switches to it
     let tmp_dir = std::env::temp_dir();
-    let rec_path = tmp_dir.join(format!(
-        "ab-e2e-rec-viewport-{}.webm",
-        std::process::id()
-    ));
+    let rec_path = tmp_dir.join(format!("ab-e2e-rec-viewport-{}.webm", std::process::id()));
     let resp = execute_command(
         &json!({ "id": "4", "action": "recording_start", "path": rec_path.to_string_lossy() }),
         &mut state,
