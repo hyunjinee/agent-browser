@@ -3621,7 +3621,6 @@ async fn handle_viewport(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
 
     mgr.set_viewport(width, height, scale, mobile).await?;
 
-    // Remember viewport for re-application to new contexts (e.g., recording)
     state.viewport = Some((width, height, scale, mobile));
 
     // Update stream server viewport so status messages and screencast use the new dimensions
@@ -3994,8 +3993,6 @@ async fn handle_recording_start(cmd: &Value, state: &mut DaemonState) -> Result<
             target_type: "page".to_string(),
         });
 
-        // Re-apply viewport to the recording context so it inherits the
-        // user's custom resolution instead of falling back to the default.
         if let Some((w, h, scale, mobile)) = viewport {
             let _ = mgr.set_viewport(w, h, scale, mobile).await;
         }
