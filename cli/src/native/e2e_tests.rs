@@ -4140,7 +4140,6 @@ async fn e2e_upload_with_css_selector() {
 async fn e2e_recording_inherits_viewport() {
     let mut state = DaemonState::new();
 
-    // Launch browser
     let resp = execute_command(
         &json!({ "id": "1", "action": "launch", "headless": true }),
         &mut state,
@@ -4148,7 +4147,6 @@ async fn e2e_recording_inherits_viewport() {
     .await;
     assert_success(&resp);
 
-    // Navigate to a simple page
     let resp = execute_command(
         &json!({ "id": "2", "action": "navigate", "url": "data:text/html,<h1>Viewport</h1>" }),
         &mut state,
@@ -4156,7 +4154,6 @@ async fn e2e_recording_inherits_viewport() {
     .await;
     assert_success(&resp);
 
-    // Set a custom viewport (non-default)
     let resp = execute_command(
         &json!({ "id": "3", "action": "viewport", "width": 800, "height": 600 }),
         &mut state,
@@ -4164,7 +4161,6 @@ async fn e2e_recording_inherits_viewport() {
     .await;
     assert_success(&resp);
 
-    // Start recording — this creates a new browser context and switches to it
     let tmp_dir = std::env::temp_dir();
     let rec_path = tmp_dir.join(format!("ab-e2e-rec-viewport-{}.webm", std::process::id()));
     let resp = execute_command(
@@ -4174,11 +4170,8 @@ async fn e2e_recording_inherits_viewport() {
     .await;
     assert_success(&resp);
 
-    // Give the recording context a moment to finish navigation
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    // The active page is now in the recording context.
-    // Verify it inherited the custom viewport dimensions.
     let resp = execute_command(
         &json!({ "id": "5", "action": "evaluate", "script": "window.innerWidth" }),
         &mut state,
@@ -4204,7 +4197,6 @@ async fn e2e_recording_inherits_viewport() {
         "Recording context height should be 600 (inherited from viewport), got {rec_height}"
     );
 
-    // Stop recording and cleanup
     let resp = execute_command(
         &json!({ "id": "7", "action": "recording_stop" }),
         &mut state,
