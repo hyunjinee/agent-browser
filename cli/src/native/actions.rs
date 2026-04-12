@@ -3118,15 +3118,6 @@ async fn wait_for_url(
     cdp_poll_until_true(client, session_id, &url_check_js(pattern), timeout_ms).await
 }
 
-async fn wait_for_text(
-    client: &super::cdp::client::CdpClient,
-    session_id: &str,
-    text: &str,
-    timeout_ms: u64,
-) -> Result<(), String> {
-    cdp_poll_until_true(client, session_id, &text_check_js(text), timeout_ms).await
-}
-
 async fn wait_for_function(
     client: &super::cdp::client::CdpClient,
     session_id: &str,
