@@ -1936,8 +1936,7 @@ mod tests {
             s2.write_all(resp.as_bytes()).await.unwrap();
         });
 
-        let result =
-            resolve_cdp_from_active_port(port, "/devtools/browser/nonexistent-uuid").await;
+        let result = resolve_cdp_from_active_port(port, "/devtools/browser/nonexistent-uuid").await;
         assert!(result.is_ok(), "should fall back to HTTP: {:?}", result);
         let url = result.unwrap();
         assert!(
