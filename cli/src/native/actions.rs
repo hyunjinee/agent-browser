@@ -3993,6 +3993,9 @@ async fn handle_recording_start(cmd: &Value, state: &mut DaemonState) -> Result<
             target_type: "page".to_string(),
         });
 
+        // Inherit the current viewport dimensions into the recording context.
+        // Without this, the recording context resets to the default 1280×720
+        // regardless of what the user previously set. Regression: #1208
         if let Some((w, h, scale, mobile)) = viewport {
             let _ = mgr.set_viewport(w, h, scale, mobile).await;
         }
