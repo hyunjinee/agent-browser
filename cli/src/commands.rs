@@ -2905,6 +2905,22 @@ mod tests {
     }
 
     #[test]
+    fn test_tab_switch_by_target_id() {
+        // The CLI forwards `target:<id>` untouched; the daemon's
+        // `TabRef::parse` is what recognizes the prefix.
+        let cmd = parse_command(&args("tab target:ABC123"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "tab_switch");
+        assert_eq!(cmd["tabId"], "target:ABC123");
+    }
+
+    #[test]
+    fn test_tab_close_by_target_id() {
+        let cmd = parse_command(&args("tab close target:ABC123"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "tab_close");
+        assert_eq!(cmd["tabId"], "target:ABC123");
+    }
+
+    #[test]
     fn test_tab_sends_string_tab_id() {
         let cmd = parse_command(&args("tab t2"), &default_flags()).unwrap();
         assert!(

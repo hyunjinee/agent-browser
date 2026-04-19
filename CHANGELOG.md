@@ -1,5 +1,11 @@
 # agent-browser
 
+## Unreleased
+
+### New Features
+
+- **CDP targetId in tab operations** - `tab list --json` now includes the Chrome DevTools Protocol `targetId` for every entry, and `tab`/`tab close` accept a new `target:<id>` reference form so tabs can be switched or closed by CDP target id directly. `tab new`, `tab switch`, and `tab close` responses also echo `targetId` so callers don't need a follow-up list call to pivot to targetId-addressing (#1265)
+
 ## 0.26.0
 
 <!-- release:start -->

@@ -180,11 +180,13 @@ pub fn format_tab_id(tab_id: u32) -> String {
 }
 
 /// A tab reference as parsed from CLI/JSON input. Either a stable id like
-/// `t2` or a user-assigned label like `docs`.
+/// `t2`, a user-assigned label like `docs`, or a CDP target id supplied as
+/// `target:<id>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TabRef {
     Id(u32),
     Label(String),
+    TargetId(String),
 }
 
 impl TabRef {
@@ -194,7 +196,22 @@ impl TabRef {
     pub fn parse(input: &str) -> Result<Self, String> {
         let input = input.trim();
         if input.is_empty() {
-            return Err("Empty tab reference; expected `t<N>` (e.g. `t2`) or a label".to_string());
+            return Err(
+                "Empty tab reference; expected `t<N>` (e.g. `t2`), a label, or `target:<id>`"
+                    .to_string(),
+            );
+        }
+        if let Some(rest) = input.strip_prefix("target:") {
+            if rest.is_empty() {
+                return Err("Empty target id; expected `target:<cdp-target-id>`".to_string());
+            }
+            if rest.chars().any(|c| c.is_whitespace()) {
+                return Err(format!(
+                    "Invalid target id `{}`; CDP target ids contain no whitespace",
+                    rest
+                ));
+            }
+            return Ok(TabRef::TargetId(rest.to_string()));
         }
         if let Some(digits) = input.strip_prefix('t').or_else(|| input.strip_prefix('T')) {
             if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
@@ -962,6 +979,7 @@ impl BrowserManager {
                 json!({
                     "tabId": format_tab_id(p.tab_id),
                     "label": p.label,
+                    "targetId": p.target_id,
                     "title": p.title,
                     "url": p.url,
                     "type": p.target_type,
@@ -994,6 +1012,17 @@ impl BrowserManager {
                     format!(
                         "No tab with label `{}`; run `agent-browser tab` to list open tabs",
                         name
+                    )
+                }),
+            TabRef::TargetId(tid) => self
+                .pages
+                .iter()
+                .find(|p| p.target_id == *tid)
+                .map(|p| p.tab_id)
+                .ok_or_else(|| {
+                    format!(
+                        "No tab with targetId `{}`; run `agent-browser tab` to list open tabs",
+                        tid
                     )
                 }),
         }
@@ -1057,6 +1086,7 @@ impl BrowserManager {
         self.next_tab_id += 1;
         let index = self.pages.len();
         let label = label.map(|s| s.to_string());
+        let created_target_id = result.target_id.clone();
         self.pages.push(PageInfo {
             tab_id,
             label: label.clone(),
@@ -1071,6 +1101,7 @@ impl BrowserManager {
         Ok(json!({
             "tabId": format_tab_id(tab_id),
             "label": label,
+            "targetId": created_target_id,
             "url": target_url,
             "total": self.pages.len(),
         }))
@@ -1107,6 +1138,7 @@ impl BrowserManager {
         Ok(json!({
             "tabId": format_tab_id(page.tab_id),
             "label": page.label,
+            "targetId": page.target_id,
             "url": url,
             "title": title,
         }))
@@ -1127,6 +1159,7 @@ impl BrowserManager {
         self.update_active_page_after_removal(target_index);
         let closed_tab_id = page.tab_id;
         let closed_label = page.label.clone();
+        let closed_target_id = page.target_id.clone();
         let _ = self
             .client
             .send_command_typed::<_, Value>(
@@ -1144,6 +1177,7 @@ impl BrowserManager {
         Ok(json!({
             "tabId": format_tab_id(closed_tab_id),
             "label": closed_label,
+            "targetId": closed_target_id,
             "closed": true,
         }))
     }
@@ -1765,6 +1799,39 @@ mod tests {
         assert!(TabRef::parse("-docs").is_err());
         assert!(TabRef::parse("docs!").is_err());
         assert!(TabRef::parse("docs space").is_err());
+    }
+
+    #[test]
+    fn test_parse_tab_ref_target_id() {
+        assert_eq!(
+            TabRef::parse("target:ABC123"),
+            Ok(TabRef::TargetId("ABC123".to_string()))
+        );
+        // CDP target ids are opaque; accept whatever the protocol hands back
+        // (dashes, mixed case, etc.) as long as there's no whitespace.
+        assert_eq!(
+            TabRef::parse("target:A1B2-C3D4-E5F6"),
+            Ok(TabRef::TargetId("A1B2-C3D4-E5F6".to_string()))
+        );
+        assert_eq!(
+            TabRef::parse("  target:ABC123  "),
+            Ok(TabRef::TargetId("ABC123".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_tab_ref_rejects_empty_target_id() {
+        let err = TabRef::parse("target:").unwrap_err();
+        assert!(
+            err.contains("Empty target id"),
+            "error should teach the user to supply an id after `target:`: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_tab_ref_rejects_target_id_with_whitespace() {
+        assert!(TabRef::parse("target:with space").is_err());
     }
 
     #[test]

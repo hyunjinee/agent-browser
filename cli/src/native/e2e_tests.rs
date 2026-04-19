@@ -912,6 +912,14 @@ async fn e2e_tabs() {
     assert_eq!(tabs.len(), 1);
     assert_eq!(tabs[0]["active"], true);
     assert_eq!(tabs[0]["tabId"], "t1", "First tab should have tabId t1");
+    assert!(
+        tabs[0]["targetId"]
+            .as_str()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false),
+        "tab_list entries should expose a non-empty CDP targetId: {:?}",
+        tabs[0]
+    );
 
     // Open new tab
     let resp = execute_command(
@@ -1168,6 +1176,104 @@ async fn e2e_tab_new_with_label_can_be_switched_and_closed() {
     .await;
     assert_success(&resp);
     assert_eq!(get_data(&resp)["label"], "docs");
+
+    let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
+    assert_success(&resp);
+}
+
+/// `target:<id>` must work anywhere a `t<N>` id is accepted: agents can
+/// grab the CDP targetId from `tab_list` or a `tab_new` response and drive
+/// switch/close against it, which is stabler than positional indices when
+/// tabs reorder.
+#[tokio::test]
+#[ignore]
+async fn e2e_tab_switch_and_close_by_target_id() {
+    let mut state = DaemonState::new();
+
+    let resp = execute_command(
+        &json!({ "id": "1", "action": "launch", "headless": true }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({ "id": "2", "action": "navigate", "url": "data:text/html,<title>Home</title>" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    // Open a second tab; `tab_new` should echo back the CDP targetId so
+    // callers don't need a separate list round-trip to get it.
+    let resp = execute_command(
+        &json!({
+            "id": "3",
+            "action": "tab_new",
+            "url": "data:text/html,<title>Second</title>",
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    let second_target_id = get_data(&resp)["targetId"]
+        .as_str()
+        .expect("tab_new response should include targetId")
+        .to_string();
+    assert!(!second_target_id.is_empty());
+
+    // Go back to the first tab, then switch to the second by targetId.
+    let resp = execute_command(
+        &json!({ "id": "4", "action": "tab_switch", "tabId": "t1" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(state.browser.as_ref().unwrap().active_tab_id(), Some(1));
+
+    let resp = execute_command(
+        &json!({
+            "id": "5",
+            "action": "tab_switch",
+            "tabId": format!("target:{}", second_target_id),
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(state.browser.as_ref().unwrap().active_tab_id(), Some(2));
+    assert_eq!(get_data(&resp)["tabId"], "t2");
+    assert_eq!(get_data(&resp)["targetId"], second_target_id);
+
+    // Close it by targetId and confirm only one tab remains.
+    let resp = execute_command(
+        &json!({
+            "id": "6",
+            "action": "tab_close",
+            "tabId": format!("target:{}", second_target_id),
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(get_data(&resp)["targetId"], second_target_id);
+
+    let resp = execute_command(&json!({ "id": "7", "action": "tab_list" }), &mut state).await;
+    assert_success(&resp);
+    let tabs = get_data(&resp)["tabs"].as_array().unwrap();
+    assert_eq!(tabs.len(), 1);
+
+    // An unknown targetId must produce the teaching error, not a panic.
+    let resp = execute_command(
+        &json!({
+            "id": "8",
+            "action": "tab_switch",
+            "tabId": "target:does-not-exist",
+        }),
+        &mut state,
+    )
+    .await;
+    assert_eq!(resp.get("success").and_then(|v| v.as_bool()), Some(false));
 
     let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
     assert_success(&resp);

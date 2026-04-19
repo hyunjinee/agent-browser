@@ -188,11 +188,11 @@ agent-browser network har stop [output.har]    # Stop and save HAR (temp path if
 ## Tabs & frames
 
 ```bash
-agent-browser tab                              # List tabs (each row shows tabId and label)
-agent-browser tab new [url]                    # New tab
-agent-browser tab new --label docs [url]       # New tab with a user-assigned label
-agent-browser tab <t<N>|label>                 # Switch to a tab by id or label
-agent-browser tab close [t<N>|label]           # Close a tab (defaults to active)
+agent-browser tab                                   # List tabs (each row shows tabId and label)
+agent-browser tab new [url]                         # New tab
+agent-browser tab new --label docs [url]            # New tab with a user-assigned label
+agent-browser tab <t<N>|label|target:<id>>          # Switch to a tab by id, label, or CDP targetId
+agent-browser tab close [t<N>|label|target:<id>]    # Close a tab (defaults to active)
 agent-browser window new                       # Open new browser window
 agent-browser frame <sel>                      # Switch to iframe by CSS selector
 agent-browser frame @e3                        # Switch to iframe by element ref
@@ -222,6 +222,22 @@ Labels are never auto-generated and never rewritten on navigation — an agent
 that names a tab `docs` keeps that name until the tab is closed. Labels are
 unique within a session; creating a second tab with an existing label
 errors.
+
+### CDP target ids
+
+`agent-browser tab list --json` includes a `targetId` field for every entry —
+the Chrome DevTools Protocol target id for that page. Pass it back anywhere a
+`t<N>` id is accepted by prefixing it with `target:`, which is useful when
+automating against external tools that already track tabs by CDP id:
+
+```bash
+tid=$(agent-browser tab list --json | jq -r '.data.tabs[0].targetId')
+agent-browser tab "target:$tid"          # switch
+agent-browser tab close "target:$tid"    # close
+```
+
+`tab new`, `tab switch`, and `tab close` responses also echo `targetId`, so
+you can pivot to targetId-addressing without a follow-up list call.
 
 Refs (`@e1`, etc.) are scoped to the tab that was active when the snapshot
 ran, so switch tabs first, then snapshot and interact:
