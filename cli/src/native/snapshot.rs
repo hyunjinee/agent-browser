@@ -1596,10 +1596,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // JSX whitespace false-positive (Issue #1271)
-    // React `{' '}` compiles to `<!-- --> ` in HTML. Chrome's AX tree either
-    // omits the space node entirely (Scenario A) or marks it ignored (Scenario B).
-    // In both cases the aggregation must not produce a space-less string.
+    // StaticText aggregation — JSX whitespace (Issue #1271)
+    // React `{' '}` compiles to `<!-- --> ` in HTML. Chrome marks the resulting
+    // whitespace-only text node as `ignored:true`. The tests below verify that
+    // the space survives aggregation and that no synthetic space is ever injected.
     // -----------------------------------------------------------------------
 
     fn make_ax_node(
@@ -1656,6 +1656,8 @@ mod tests {
 
         let (tree_nodes, _) = build_tree(&nodes);
 
+        // tree_nodes[1] is the first StaticText child; aggregation folds the
+        // ignored whitespace node and the trailing text into it.
         assert_eq!(
             tree_nodes[1].name,
             "You posted again yesterday. Two likes. One from your mom.",
@@ -1668,13 +1670,14 @@ mod tests {
     #[test]
     fn test_static_text_aggregation_no_false_positive_space() {
         let nodes = vec![
-            make_ax_node("1", "heading", "Price $10", vec!["2", "3"], false),
+            make_ax_node("1", "heading", "$10", vec!["2", "3"], false),
             make_ax_node("2", "StaticText", "$", vec![], false),
             make_ax_node("3", "StaticText", "10", vec![], false),
         ];
 
         let (tree_nodes, _) = build_tree(&nodes);
 
+        // tree_nodes[1] is the first StaticText child.
         assert_eq!(tree_nodes[1].name, "$10");
     }
 }
