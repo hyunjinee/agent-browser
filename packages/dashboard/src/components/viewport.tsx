@@ -387,8 +387,10 @@ export function Viewport() {
       // CDP only processes a keyDown (navigation, editing commands, even arrow keys)
       // when a `text` field is present — omitting it makes CDP drop the event. So a
       // keyDown always carries text: the printable char, or "" for non-printable
-      // keys (arrows, Home, …) and for Ctrl/Meta chords where the char must not type.
-      const suppressText = e.ctrlKey || e.metaKey;
+      // keys (arrows, Home, …) and for Meta chords where the char must not type.
+      // Scoped to Meta (matches macKeyCommands): blanking text for Ctrl chords on
+      // Windows/Linux would strip the printable char without supplying a command.
+      const suppressText = e.metaKey;
       const text = eventType !== "keyDown"
         ? undefined
         : suppressText
